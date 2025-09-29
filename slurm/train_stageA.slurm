@@ -15,12 +15,15 @@
 set -euo pipefail
 
 # --- Paths (adjust if your layout changes) ---
-PROJECT_DIR="/scratch/st-ipor-1/cperez/MedSAM"
+PROJECT_DIR="/arc/project/st-ipor-1/carlosp/fundus_data/Papila"
+SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
-BB_DIR="${PROJECT_DIR}/bounding_box"
-RUNS_DIR="${PROJECT_DIR}/runs/detect"
-DATA_ROOT="${PROJECT_DIR}/papila_yolo"          # expects images/{train,val,test}, labels/{train,val,test}
-ROI_OUT="${PROJECT_DIR}/papila_yolo_cupROI"     # will be created by ROI builder
+
+
+BB_DIR="${SCRATCH_DIR}/bounding_box"
+RUNS_DIR="${BB_DIR}/runs/detect"
+DATA_ROOT="${BB_DIR}/papila_yolo"          # expects images/{train,val,test}, labels/{train,val,test}
+ROI_OUT="${BB_DIR}/papila_yolo_cupROI"     # will be created by ROI builder
 OUT_JSONL="${BB_DIR}/two_stage_boxes.jsonl"
 
 STAGEA_NAME="stageA_disc_only"
