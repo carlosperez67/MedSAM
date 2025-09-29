@@ -63,20 +63,10 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export PYTHONUNBUFFERED=1
 
 # --------------------------------------------------------------------
-# Stage A — Train disc-only detector (filters labels to class=disc)
+# Build cup-ROI dataset (uses GT disc boxes)
 # --------------------------------------------------------------------
-echo "[STAGE A] Training disc-only detector…"
-python "${BB_DIR}/train_stageA_disc_only.py" \
+echo "[DATA] Building cup ROI dataset at ${ROI_OUT}…"
+ python "${BB_DIR}/build_cup_roi_dataset.py" \
   --data_root "${DATA_ROOT}" \
-  --model ./weights/yolov8n.pt \
-  --epochs 100 \
-  --imgsz 640 \
-  --batch 32 \
-  --project "${RUNS_DIR}" \
-  --name "${STAGEA_NAME}"
-
-STAGEA_BEST="${RUNS_DIR}/${STAGEA_NAME}/weights/best.pt"
-if [[ ! -f "${STAGEA_BEST}" ]]; then
-  echo "[ERROR] Stage A best checkpoint not found: ${STAGEA_BEST}" >&2
-  exit 2
-fi
+  --out_root "${ROI_OUT}" \
+  --pad_pct 0.10
