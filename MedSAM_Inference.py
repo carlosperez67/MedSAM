@@ -106,7 +106,13 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-device = args.device
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
+
 medsam_model = sam_model_registry["vit_b"](checkpoint=args.checkpoint)
 medsam_model = medsam_model.to(device)
 medsam_model.eval()
