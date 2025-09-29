@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=bb-two-stage
+#SBATCH --job-name=bb-stage_A
 #SBATCH --account=st-ipor-1-gpu
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
@@ -45,6 +45,12 @@ export XLA_FLAGS="--xla_gpu_strict_conv_algorithm_picker=false"
 # --- Activate your per-project Conda env ---
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate "$ENV_PREFIX"
+
+# Optional: keep caches writable to avoid matplotlib/font warnings on compute nodes
+export XDG_CACHE_HOME="/scratch/st-ipor-1/cperez/.cache"
+export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
+mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR"
+
 
 # Helpful runtime info
 python - <<'PY'
