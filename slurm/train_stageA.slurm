@@ -68,7 +68,7 @@ export PYTHONUNBUFFERED=1
 echo "[STAGE A] Training disc-only detector…"
 python "${BB_DIR}/train_stageA_disc_only.py" \
   --data_root "${DATA_ROOT}" \
-  --model yolov8n.pt \
+  --model ./weights/yolov8n.pt \
   --epochs 100 \
   --imgsz 640 \
   --batch 32 \
