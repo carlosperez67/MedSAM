@@ -166,6 +166,7 @@ def boxes_to_yolo_lines(boxes_by_class: Dict[str, Tuple[int,int,int,int]], w: in
 
 def main():
     args = parse_args()
+    print(args)
     os.makedirs(args.out_dir, exist_ok=True)
 
     # Collect contours: {stem: {"disc": [pts...], "cup": [pts...]}}

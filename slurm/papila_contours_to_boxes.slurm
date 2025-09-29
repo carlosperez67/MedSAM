@@ -39,7 +39,8 @@ export PYTHONUNBUFFERED=1
 # --------------------------------------------------------------------
 # Stage A — Train disc-only detector (filters labels to class=disc)
 # --------------------------------------------------------------------
-echo "[STAGE A] Training disc-only detector…"
+echo ${CONTOUR_DIR}
 python "${BB_DIR}/papila_contours_to_boxes.py" \
   --contour_dir "${CONTOUR_DIR}" \
   --image_dir ${IMG_DIR}
+
