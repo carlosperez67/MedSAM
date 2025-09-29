@@ -43,13 +43,20 @@ export PYTHONUNBUFFERED=1
 echo ${CONTOUR_DIR}
 python "${BB_DIR}/papila_contours_to_boxes.py" \
   --contour_dir "${CONTOUR_DIR}" \
-  --image_dir ${IMG_DIR}
+  --image_dir ${IMG_DIR} \
   --out_dir "${OUT_DIR}"
 
 python "${BB_DIR}/visualize_boxes.py" \
-  --autoboxes "${OUT_DIR}/autoboxes_two.jsonl"
-  --out_dir "${OUT_DIR}/viz"
+  --autoboxes "${OUT_DIR}/autoboxes_two.jsonl" \
+  --out_dir "${OUT_DIR}/viz" \
   --image_dir ${IMG_DIR}
+
+python "${BB_DIR}/dataset_splitter.py" \
+  --image_dir ${IMG_DIR} \
+  --labels_dir ${OUT_DIR}/yolo_labels \
+  --out_root  "${BB_DIR}/papila_yolo"
+
+
 
 
 
