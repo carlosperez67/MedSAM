@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=papila_contours_to_boxes
+#SBATCH --job-name=preprocess_papila
 #SBATCH --account=st-ipor-1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
