@@ -52,7 +52,7 @@ python "${BB_DIR}/visualize_boxes.py" \
   --image_dir ${IMG_DIR}
 
 python "${BB_DIR}/dataset_splitter.py" \
-  --image_dir ${IMG_DIR} \
+  --img_dir ${IMG_DIR} \
   --labels_dir ${OUT_DIR}/yolo_labels \
   --out_root  "${BB_DIR}/papila_yolo"
 
