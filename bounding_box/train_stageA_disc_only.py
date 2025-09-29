@@ -63,7 +63,6 @@ def make_disc_only_dataset(root: Path) -> Path:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data_root", default="./papila_yolo")
-    ap.add_argument("--model", default="yolov8n.pt")
     ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--batch", type=int, default=16)
