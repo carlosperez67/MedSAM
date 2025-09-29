@@ -29,7 +29,6 @@ OUT_JSONL="${BB_DIR}/two_stage_boxes.jsonl"
 STAGEA_NAME="stageA_disc_only"
 STAGEB_NAME="stageB_cup_roi"
 
-mkdir -p "${PROJECT_DIR}/logs" "${RUNS_DIR}"
 
 echo "SLURM Job ID: $SLURM_JOB_ID"
 echo "Nodes       : $SLURM_JOB_NODELIST"
