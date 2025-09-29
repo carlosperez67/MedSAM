@@ -69,6 +69,8 @@ def main():
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--project", default="runs/detect")
     ap.add_argument("--name", default="stageA_disc_only")
+    ap.add_argument("--model", default="./weights/yolov8n.pt")
+
     args = ap.parse_args()
 
     data_root = Path(args.data_root)
@@ -76,7 +78,10 @@ def main():
     yaml_path = out_root/"od_only.yaml"
 
     device = ultralytics_device_arg()
-    model = YOLO(args.model)
+    mpath = Path(args.model)
+    if not mpath.exists():
+        raise SystemExit(f"Model weights not found at {mpath}. Put yolov8n.pt there or pass --model /abs/path.pt")
+    model = YOLO(str(mpath))  # <-- absolute local path, no downloads
     model.train(
         data=str(yaml_path),
         epochs=args.epochs,
