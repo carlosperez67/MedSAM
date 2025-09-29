@@ -15,7 +15,7 @@
 set -euo pipefail
 
 # --- Paths (adjust if your layout changes) ---
-PROJECT_DIR="/scratch/st-ipor-1/cperez/medsam"
+PROJECT_DIR="/scratch/st-ipor-1/cperez/MedSAM"
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
 BB_DIR="${PROJECT_DIR}/bounding_box"
 RUNS_DIR="${PROJECT_DIR}/runs/detect"
@@ -74,53 +74,3 @@ if [[ ! -f "${STAGEA_BEST}" ]]; then
   echo "[ERROR] Stage A best checkpoint not found: ${STAGEA_BEST}" >&2
   exit 2
 fi
-
-# --------------------------------------------------------------------
-# Build cup-ROI dataset (uses GT disc boxes)
-# --------------------------------------------------------------------
-#echo "[DATA] Building cup ROI dataset at ${ROI_OUT}…"
-# python "${BB_DIR}/build_cup_roi_dataset.py" \
-#  --data_root "${DATA_ROOT}" \
-#  --out_root "${ROI_OUT}" \
-#  --pad_pct 0.10
-
-# --------------------------------------------------------------------
-# Stage B — Train cup-only detector on ROI crops
-# --------------------------------------------------------------------
-echo "[STAGE B] Training cup-only detector on ROIs…"
-python "${BB_DIR}/train_stageB_cup_roi.py" \
-  --data_root "${ROI_OUT}" \
-  --model yolov8n.pt \
-  --epochs 100 \
-  --imgsz 640 \
-  --batch 32 \
-  --project "${RUNS_DIR}" \
-  --name "${STAGEB_NAME}"
-
-STAGEB_BEST="${RUNS_DIR}/${STAGEB_NAME}/weights/best.pt"
-if [[ ! -f "${STAGEB_BEST}" ]]; then
-  echo "[ERROR] Stage B best checkpoint not found: ${STAGEB_BEST}" >&2
-  exit 3
-fi
-
-# --------------------------------------------------------------------
-# Optional: two-stage inference on test split (if present)
-# --------------------------------------------------------------------
-TEST_IMAGES="${DATA_ROOT}/images/test"
-if [[ -d "${TEST_IMAGES}" ]]; then
-  echo "[INFER] Two-stage inference on test images…"
-  python "${BB_DIR}/infer_two_stage_to_boxes.py" \
-    --stageA "${STAGEA_BEST}" \
-    --stageB "${STAGEB_BEST}" \
-    --images "${TEST_IMAGES}" \
-    --out_jsonl "${OUT_JSONL}" \
-    --od_pad_pct 0.08 \
-    --confA 0.25 \
-    --confB 0.10
-  echo "[INFER] Wrote: ${OUT_JSONL}"
-else
-  echo "[WARN] Test images not found at ${TEST_IMAGES}; skipping inference."
-fi
-
-echo "End: $(date)"
-echo "[DONE] Two-stage pipeline completed."
