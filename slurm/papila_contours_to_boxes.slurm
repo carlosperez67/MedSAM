@@ -23,12 +23,6 @@ CONTOUR_DIR="${PROJECT_DIR}/Contours"
 IMG_DIR="${PROJECT_DIR}/FundusImages"
 OUT_DIR="${BB_DIR}/papila_boxes"
 
-echo "Visible GPUs (from nvidia-smi):"
-nvidia-smi -L || echo "nvidia-smi not available"
-
-# XLA flag (harmless if unused)
-export XLA_FLAGS="--xla_gpu_strict_conv_algorithm_picker=false"
-
 # --- Activate your per-project Conda env ---
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate "$ENV_PREFIX"
@@ -38,13 +32,6 @@ export XDG_CACHE_HOME="/scratch/st-ipor-1/cperez/.cache"
 export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
 mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR"
 
-
-# Helpful runtime info
-python - <<'PY'
-import torch, sys, ultralytics
-print(f"[ENV] torch {torch.__version__} | cuda_available={torch.cuda.is_available()} | cuda_device_count={torch.cuda.device_count()}")
-print(f"[ENV] ultralytics {ultralytics.__version__}")
-PY
 
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export PYTHONUNBUFFERED=1
