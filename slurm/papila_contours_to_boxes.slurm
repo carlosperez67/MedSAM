@@ -23,14 +23,6 @@ CONTOUR_DIR="${PROJECT_DIR}/Contours"
 IMG_DIR="${PROJECT_DIR}/FundusImages"
 OUT_DIR="${BB_DIR}/papila_boxes"
 
-echo "SLURM Job ID: $SLURM_JOB_ID"
-echo "Nodes       : $SLURM_JOB_NODELIST"
-echo "Start       : $(date)"
-echo "Working dir : ${SLURM_SUBMIT_DIR}"
-echo "Project dir : ${PROJECT_DIR}"
-echo "Runs dir    : ${RUNS_DIR}"
-echo "Data root   : ${DATA_ROOT}"
-
 echo "Visible GPUs (from nvidia-smi):"
 nvidia-smi -L || echo "nvidia-smi not available"
 
