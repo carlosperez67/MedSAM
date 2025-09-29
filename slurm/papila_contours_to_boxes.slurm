@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=papila_contours_to_boxes
 #SBATCH --account=st-ipor-1
-#SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
