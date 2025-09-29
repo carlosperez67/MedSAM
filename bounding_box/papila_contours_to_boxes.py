@@ -74,7 +74,7 @@ def parse_args():
                     help="Directory with contour .txt files")
     ap.add_argument("--image_dir", default="/Users/carlosperez/OneDrive_UBC/Ipek_Carlos/GlaucomaDatasets/Papila_db/FundusImages",
                     help="Directory with images (optional; enables % padding and clamping)")
-    ap.add_argument("--out_dir", default="./papila_boxes_two", help="Output directory")
+    ap.add_argument("--out_dir", default="./papila_boxes", help="Output directory")
 
     ap.add_argument("--strategy", choices=["union", "largest"], default="union",
                     help="Combine multiple contours per class: union of boxes or largest-area polygon")
