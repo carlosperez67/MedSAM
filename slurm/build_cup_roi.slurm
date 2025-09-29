@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=bb-stage_A
+#SBATCH --job-name=build_cup_roi
 #SBATCH --account=st-ipor-1-gpu
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
@@ -68,7 +68,7 @@ export PYTHONUNBUFFERED=1
 echo "[STAGE A] Training disc-only detector…"
 python "${BB_DIR}/train_stageA_disc_only.py" \
   --data_root "${DATA_ROOT}" \
-  --model ${BB_DIR}/weights/yolov8n.pt \
+  --model ./weights/yolov8n.pt \
   --epochs 100 \
   --imgsz 640 \
   --batch 32 \
