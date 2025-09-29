@@ -23,6 +23,7 @@ CONTOUR_DIR="${PROJECT_DIR}/Contours"
 IMG_DIR="${PROJECT_DIR}/FundusImages"
 OUT_DIR="${BB_DIR}/papila_boxes"
 
+
 # --- Activate your per-project Conda env ---
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate "$ENV_PREFIX"
@@ -43,4 +44,13 @@ echo ${CONTOUR_DIR}
 python "${BB_DIR}/papila_contours_to_boxes.py" \
   --contour_dir "${CONTOUR_DIR}" \
   --image_dir ${IMG_DIR}
+  --out_dir "${OUT_DIR}"
+
+python "${BB_DIR}/visualize_boxes.py" \
+  --autoboxes "${OUT_DIR}/autoboxes_two.jsonl"
+  --out_dir "${OUT_DIR}/viz"
+  --image_dir ${IMG_DIR}
+
+
+
 
