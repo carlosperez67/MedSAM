@@ -13,6 +13,11 @@
 
 set -euo pipefail
 
+PROJECT_DIR="/arc/project/st-ipor-1/carlosp/fundus_data/Papila"
+SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"
+ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
+
+
 # --- Activate your per-project Conda env ---
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate "$ENV_PREFIX"
@@ -26,10 +31,6 @@ mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export PYTHONUNBUFFERED=1
 
-
-PROJECT_DIR="/arc/project/st-ipor-1/carlosp/fundus_data/Papila"
-SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"
-ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
 
 
 BB_DIR="${SCRATCH_DIR}/bounding_box"
