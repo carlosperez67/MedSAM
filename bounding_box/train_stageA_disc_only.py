@@ -89,7 +89,7 @@ def main():
     ap.add_argument("--project", default="runs/detect")
     ap.add_argument("--name", default="stageA_disc_only")
     ap.add_argument("--model", default="./weights/yolov8n.pt")
-    ap.add_argument("--train", default="true")
+    ap.add_argument("--train", type=int, default=1)
     args = ap.parse_args()
 
     data_root = Path(args.data_root)

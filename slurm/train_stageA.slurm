@@ -76,6 +76,7 @@ python "${BB_DIR}/train_stageA_disc_only.py" \
   --batch 32 \
   --project "${RUNS_DIR}" \
   --name "${STAGEA_NAME}"
+  --train 0
 
 STAGEA_BEST="${RUNS_DIR}/${STAGEA_NAME}/weights/best.pt"
 if [[ ! -f "${STAGEA_BEST}" ]]; then
