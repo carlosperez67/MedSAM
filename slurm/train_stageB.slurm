@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=bb-stage_A
+#SBATCH --job-name=bb-stage_B
 #SBATCH --account=st-ipor-1-gpu
 #SBATCH --partition=gpu
 #SBATCH --nodes=1

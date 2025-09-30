@@ -20,6 +20,19 @@ Outputs:
     labels/{...}  (filtered to disc only)
 """
 
+def _split_has_data(root: Path, split: str) -> bool:
+    """Return True if both images/<split> and labels/<split> exist and contain files."""
+    img_dir = root / "images" / split
+    lbl_dir = root / "labels" / split
+    if not (img_dir.exists() and lbl_dir.exists()):
+        return False
+    try:
+        has_img = any(img_dir.iterdir())
+        has_lbl = any(lbl_dir.iterdir())
+    except Exception:
+        return False
+    return has_img and has_lbl
+
 def filter_labels_to_disc(src_lbl_dir: Path, dst_lbl_dir: Path):
     dst_lbl_dir.mkdir(parents=True, exist_ok=True)
     for txt in sorted(src_lbl_dir.glob("*.txt")):
@@ -40,23 +53,30 @@ def make_disc_only_dataset(root: Path) -> Path:
         (out / "images" / split).mkdir(parents=True, exist_ok=True)
         (out / "labels" / split).mkdir(parents=True, exist_ok=True)
         # images: symlink
-        for img in (root/"images"/split).glob("*"):
-            dst = out/"images"/split/img.name
-            if dst.exists(): dst.unlink()
-            dst.symlink_to(img.resolve())
+        src_img_dir = root / "images" / split
+        if src_img_dir.exists():
+            for img in src_img_dir.glob("*"):
+                dst = out / "images" / split / img.name
+                if dst.exists():
+                    dst.unlink()
+                dst.symlink_to(img.resolve())
         # labels: copy filtered
-        src_lbl = root/"labels"/split
+        src_lbl = root / "labels" / split
         if src_lbl.exists():
-            filter_labels_to_disc(src_lbl, out/"labels"/split)
-    # write YAML
+            filter_labels_to_disc(src_lbl, out / "labels" / split)
+
+    # write YAML (conditionally include test only if it truly exists and has data)
     names = ["disc"]
     data_yaml = {
         "path": str(out.resolve()),
         "train": "images/train",
         "val":   "images/val",
-        "names": names
+        "names": names,
     }
-    with open(out/"od_only.yaml","w") as f:
+    if _split_has_data(out, "test"):
+        data_yaml["test"] = "images/test"
+
+    with open(out / "od_only.yaml", "w") as f:
         yaml.safe_dump(data_yaml, f, sort_keys=False)
     return out
 
@@ -69,18 +89,21 @@ def main():
     ap.add_argument("--project", default="runs/detect")
     ap.add_argument("--name", default="stageA_disc_only")
     ap.add_argument("--model", default="./weights/yolov8n.pt")
-
     args = ap.parse_args()
 
     data_root = Path(args.data_root)
     out_root  = make_disc_only_dataset(data_root)
-    yaml_path = out_root/"od_only.yaml"
+    yaml_path = out_root / "od_only.yaml"
 
+    # device selection compatible with Ultralytics (CUDA -> "0", else "cpu")
     device = ultralytics_device_arg()
+
+    # ensure local weights (offline HPC-safe)
     mpath = Path(args.model)
     if not mpath.exists():
         raise SystemExit(f"Model weights not found at {mpath}. Put yolov8n.pt there or pass --model /abs/path.pt")
-    model = YOLO(str(mpath))  # <-- absolute local path, no downloads
+
+    model = YOLO(str(mpath))
     model.train(
         data=str(yaml_path),
         epochs=args.epochs,
@@ -92,12 +115,18 @@ def main():
         cos_lr=True,
         optimizer="AdamW",
         pretrained=True,
-        patience=50
+        patience=50,
     )
-    # Optional test
-    test_dir = out_root/"images"/"test"
-    if test_dir.exists():
+
+    # Validate: prefer test split only if present in YAML; otherwise use val
+    # Reload YAML dict to check for 'test' key
+    with open(yaml_path, "r") as f:
+        y = yaml.safe_load(f)
+    if "test" in y:
         model.val(data=str(yaml_path), split="test", imgsz=args.imgsz, device=device)
+    else:
+        # fall back to validation split
+        model.val(data=str(yaml_path), imgsz=args.imgsz, device=device)
 
 if __name__ == "__main__":
     main()
