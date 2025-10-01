@@ -60,3 +60,10 @@ python "${BB_DIR}/preprocess/split_yolo.py" \
   --images_root "${FUNDUS_IMG_DIR}" \
   --labels_dir "${OUT_DIR}/labels" \
   --out_root  "${BB_DIR}/data/yolo_split"
+
+python "${BB_DIR}/preprocess/build_cup_roi_dataset.py" \
+  --project_dir "${SCRATCH_DIR}" \
+  --data_root "${BB_DIR}/data/yolo_split" \
+  --out_root "${BB_DIR}/data/yolo_split_cupROI" \
+  --pad_pct 0.10 \
+  --keep_negatives
