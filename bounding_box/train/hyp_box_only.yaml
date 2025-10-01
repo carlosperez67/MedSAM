@@ -1,0 +1,5 @@
+# hyp_box_only.yaml
+box: 7.5     # keep your box/dfl weights as desired
+cls: 0.0     # <- disable classification loss
+dfl: 1.5
+# (add any other hyp values you use; unspecified ones take defaults)
