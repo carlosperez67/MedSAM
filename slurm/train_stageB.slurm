@@ -68,7 +68,7 @@ export PYTHONUNBUFFERED=1
 # Stage B — Train cup-only detector on ROI crops
 # --------------------------------------------------------------------
 echo "[STAGE B] Training cup-only detector on ROIs…"
-python "${BB_DIR}/train_stageB_cup_roi.py" \
+python "${BB_DIR}/train/train_stageB_cup_roi.py" \
   --data_root "${ROI_OUT}" \
   --model yolov8n.pt \
   --epochs 100 \
