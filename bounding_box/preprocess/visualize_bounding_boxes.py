@@ -36,7 +36,7 @@ IMG_EXTS = [".png", ".jpg", ".jpeg", ".tif", ".tiff"]
 def parse_args():
     ap = argparse.ArgumentParser(description="Visualize OD/OC YOLO boxes from masks_to_yolo_boxes_smdg.py")
     ap.add_argument("--labels_dir", default=DEF_LABELS, help="Directory containing YOLO .txt labels")
-    ap.add_argument("--images_dir", default=DEF_IMAGES, help="Directory containing fundus images")
+    ap.add_argument("--image_dir", default=DEF_IMAGES, help="Directory containing fundus images")
     ap.add_argument("--out_dir",    default=DEF_OUTDIR, help="Output directory for visualizations")
     ap.add_argument("--img_exts",   nargs="+", default=IMG_EXTS, help="Image extensions to try when resolving stems")
     ap.add_argument("--sample", type=int, default=12, help="Random sample size (>=count to process all)")
