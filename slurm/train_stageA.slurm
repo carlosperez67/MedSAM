@@ -69,7 +69,7 @@ PY
 
 # ---------------- Stage A ----------------
 echo "[STAGE A] Training disc-only detector (val-only run with --train 0)…"
-python "${BB_DIR}/train_stageA_disc_only.py" \
+python "${BB_DIR}/train/train_stageA_disc_only.py" \
   --project_dir "${SCRATCH_DIR}" \
   --data_root   "${DATA_ROOT}" \
   --model       "${WEIGHTS}" \
