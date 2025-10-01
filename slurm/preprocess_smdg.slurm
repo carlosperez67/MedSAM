@@ -42,7 +42,7 @@ export PYTHONUNBUFFERED=1
 # --------------------------------------------------------------------
 # Stage A — Train disc-only detector (filters labels to class=disc)
 # --------------------------------------------------------------------
-echo ${CONTOUR_DIR}
+
 python "${BB_DIR}/preprocess/mask_to_boxes.py" \
   --images "${FUNDUS_IMG_DIR}" \
   --disk_masks "${OD_IMG_DIR}" \
@@ -56,8 +56,6 @@ python "${BB_DIR}/preprocess/visualize_bounding_boxes.py" \
   --labels_dir "${OUT_DIR}/labels" \
   --image_dir "${FUNDUS_IMG_DIR}" \
   --out_dir "${OUT_DIR}/viz_labels"
-
-
 
 python "${BB_DIR}/dataset_splitter.py" \
   --img_dir ${IMG_DIR} \
