@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=papila_build_cup_roi
+#SBATCH --job-name=build_cup_roi
 #SBATCH --account=st-ipor-1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -42,7 +42,7 @@ echo "Scratch Dir  : $SCRATCH_DIR"
 echo "[DATA] Building cup ROI dataset..."
 python "${BB_DIR}/build_cup_roi_dataset.py" \
   --project_dir "${SCRATCH_DIR}" \
-  --data_root "${SCRATCH_DIR}/data/yolo_split" \
-  --out_root "${SCRATCH_DIR}/data/yolo_split_cupROI" \
+  --data_root "${BB_DIR}/data/yolo_split" \
+  --out_root "${BB_DIR}/data/yolo_split_cupROI" \
   --pad_pct 0.10 \
   --keep_negatives

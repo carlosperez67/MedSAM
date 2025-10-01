@@ -15,7 +15,7 @@
 set -euo pipefail
 
 # --- Paths (adjust if your layout changes) ---
-PROJECT_DIR="/arc/project/st-ipor-1/carlosp/fundus_data/Papila"
+PROJECT_DIR="/arc/project/st-ipor-1/carlosp/fundus_data/SMDG-19"
 SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
 
