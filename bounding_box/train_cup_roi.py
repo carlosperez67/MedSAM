@@ -3,8 +3,7 @@
 import argparse
 from pathlib import Path
 from ultralytics import YOLO
-from device_utils import ultralytics_device_arg
-import yaml
+from bounding_box.train.device_utils import ultralytics_device_arg
 
 """
 Train a cup-only detector on disc-ROI crops produced by build_cup_roi_dataset.py.

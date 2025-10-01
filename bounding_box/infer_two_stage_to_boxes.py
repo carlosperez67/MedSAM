@@ -5,7 +5,7 @@ from pathlib import Path
 import cv2
 from PIL import Image
 from ultralytics import YOLO
-from device_utils import ultralytics_device_arg
+from bounding_box.train.device_utils import ultralytics_device_arg
 
 def clamp(v, lo, hi): return max(lo, min(hi, v))
 def pad_box(x1,y1,x2,y2, pad, W,H):

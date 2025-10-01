@@ -19,9 +19,9 @@ PROJECT_DIR="/scratch/st-ipor-1/cperez/medsam"
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
 BB_DIR="${PROJECT_DIR}/bounding_box"
 RUNS_DIR="${PROJECT_DIR}/runs/detect"
-DATA_ROOT="${PROJECT_DIR}/papila_yolo"          # expects images/{train,val,test}, labels/{train,val,test}
-ROI_OUT="${PROJECT_DIR}/papila_yolo_cupROI"     # will be created by ROI builder
-OUT_JSONL="${BB_DIR}/two_stage_boxes.jsonl"
+DATA_ROOT="${PROJECT_DIR}/data/papila_yolo"          # expects images/{train,val,test}, labels/{train,val,test}
+ROI_OUT="${PROJECT_DIR}/data/papila_yolo_cupROI"     # will be created by ROI builder
+OUT_JSONL="${BB_DIR}/data/two_stage_boxes.jsonl"
 
 STAGEA_NAME="stageA_disc_only"
 STAGEB_NAME="stageB_cup_roi"
