@@ -129,7 +129,7 @@ def main():
     # Derive paths from project_dir if not provided
     data_root = _expand(args.data_root) if args.data_root else (PROJECT_DIR / "data" / "yolo_split")
     model_path = _expand(args.model) if args.model else (PROJECT_DIR / "weights" / "yolov8n.pt")
-    runs_root = _expand(args.project) if args.project else (PROJECT_DIR / "runs" / "detect")
+    runs_root = _expand(args.project) if args.project else (PROJECT_DIR / "bounding_box" / "runs" / "detect")
 
     # Basic checks / creates
     if not (data_root / "images").exists() or not (data_root / "labels").exists():
