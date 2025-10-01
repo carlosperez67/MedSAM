@@ -13,36 +13,36 @@
 
 set -euo pipefail
 
-PROJECT_DIR="/arc/project/st-ipor-1/carlosp/fundus_data/Papila"
+# ---------------- PATHS ----------------
+PROJECT_DIR="/arc/project/st-ipor-1/carlosp/fundus_data/SMDG-19"
 SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
 
+BB_DIR="${SCRATCH_DIR}/bounding_box"
 
-# --- Activate your per-project Conda env ---
+# ---------------- ENV SETUP ----------------
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate "$ENV_PREFIX"
 
-# Optional: keep caches writable to avoid matplotlib/font warnings on compute nodes
 export XDG_CACHE_HOME="/scratch/st-ipor-1/cperez/.cache"
 export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
 mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR"
 
-
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export PYTHONUNBUFFERED=1
 
+# ---------------- JOB INFO ----------------
+echo "SLURM Job ID : $SLURM_JOB_ID"
+echo "Nodes        : $SLURM_JOB_NODELIST"
+echo "Start        : $(date)"
+echo "Project Dir  : $PROJECT_DIR"
+echo "Scratch Dir  : $SCRATCH_DIR"
 
-
-BB_DIR="${SCRATCH_DIR}/bounding_box"
-CONTOUR_DIR="${PROJECT_DIR}/Contours"
-IMG_DIR="${PROJECT_DIR}/FundusImages"
-OUT_DIR="${BB_DIR}/papila_boxes"
-
-
-# --------------------------------------------------------------------
-# Build cup-ROI dataset (uses GT disc boxes)
-# --------------------------------------------------------------------
-echo "[DATA] Building cup ROI datase
- python "${BB_DIR}/build_cup_roi_dataset.py" \
-  --data_root "${BB_DIR}/data/papila_yolo" \
-  --out_root "${BB_DIR}/papila_yolo_cupROI"
+# ---------------- MAIN ----------------
+echo "[DATA] Building cup ROI dataset..."
+python "${BB_DIR}/build_cup_roi_dataset.py" \
+  --project_dir "${SCRATCH_DIR}" \
+  --data_root "${SCRATCH_DIR}/data/yolo_split" \
+  --out_root "${SCRATCH_DIR}/data/yolo_split_cupROI" \
+  --pad_pct 0.10 \
+  --keep_negatives
