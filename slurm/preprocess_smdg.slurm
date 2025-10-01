@@ -20,7 +20,7 @@ ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
 
 BB_DIR="${SCRATCH_DIR}/bounding_box"
 FUNDUS_IMG_DIR="${PROJECT_DIR}/full-fundus/full-fundus"
-OC_IMG_DIR="${PROJECT_DIR}/optic-disc/optic-disk"
+OC_IMG_DIR="${PROJECT_DIR}/optic-disc/optic-disc"
 OD_IMG_DIR="${PROJECT_DIR}/optic-cup/optic-cup"
 
 OUT_DIR="${BB_DIR}/data"
