@@ -42,7 +42,7 @@ OUT_DIR="${BB_DIR}/papila_boxes"
 # --------------------------------------------------------------------
 # Build cup-ROI dataset (uses GT disc boxes)
 # --------------------------------------------------------------------
-echo "[DATA] Building cup ROI dataset at ${BB_DIR}/papila_yolo_cupROI…"
+echo "[DATA] Building cup ROI datase
  python "${BB_DIR}/build_cup_roi_dataset.py" \
-  --data_root "${BB_DIR}/papila_yolo" \
+  --data_root "${BB_DIR}/data/papila_yolo" \
   --out_root "${BB_DIR}/papila_yolo_cupROI"

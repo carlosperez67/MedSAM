@@ -53,7 +53,7 @@ python "${BB_DIR}/preprocess/mask_to_boxes.py" \
 
 python "${BB_DIR}/preprocess/visualize_bounding_boxes.py" \
   --labels_dir "${OUT_DIR}/labels" \
-  --image_dir "${FUNDUS_IMG_DIR}" \
+  --images_dir "${FUNDUS_IMG_DIR}" \
   --out_dir "${OUT_DIR}/viz_labels"
 
 python "${BB_DIR}/dataset_splitter.py" \
