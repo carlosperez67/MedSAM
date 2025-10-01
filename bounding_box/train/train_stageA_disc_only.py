@@ -162,6 +162,7 @@ def main():
             optimizer="AdamW",
             pretrained=True,
             patience=50,
+            single_cls=True,
         )
 
     # Validate: prefer test if present, else val
