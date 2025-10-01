@@ -45,12 +45,11 @@ export PYTHONUNBUFFERED=1
 
 python "${BB_DIR}/preprocess/mask_to_boxes.py" \
   --images "${FUNDUS_IMG_DIR}" \
-  --disk_masks "${OD_IMG_DIR}" \
+  --disc_masks "${OD_IMG_DIR}" \
   --cup_masks "${OC_IMG_DIR}" \
   --cup_masks "${OC_IMG_DIR}" \
   --out_labels "${OUT_DIR}/labels" \
   --out_csv "${OUT_DIR}/labels_summary.csv"
-
 
 python "${BB_DIR}/preprocess/visualize_bounding_boxes.py" \
   --labels_dir "${OUT_DIR}/labels" \
