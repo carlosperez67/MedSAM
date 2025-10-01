@@ -57,6 +57,6 @@ python "${BB_DIR}/preprocess/visualize_bounding_boxes.py" \
   --out_dir "${OUT_DIR}/viz_labels"
 
 python "${BB_DIR}/preprocess/split_yolo.py" \
-  --images_dir ${IMG_DIR} \
+  --images_dir "${FUNDUS_IMG_DIR}" \
   --labels_dir "${OUT_DIR}/labels" \
   --out_root  "${BB_DIR}/data/yolo_split"
