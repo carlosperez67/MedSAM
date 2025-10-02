@@ -1,0 +1,93 @@
+# === Preprocessing Pipeline Config (YAML) ===
+# Edit this file and pass it via:  --config /path/to/config.yaml
+# CLI flags still override anything here.
+
+# ---- Core project paths ----
+project_dir: "/Users/carlosperez/PycharmProjects/MedSAM"     # Root of your MedSAM project
+images_root: "/Users/carlosperez/OneDrive_UBC/Ipek_Carlos/GlaucomaDatasets/SMDG-19/full-fundus/full-fundus"  # Fundus images root (recursive)
+labels_dir:  "/Users/carlosperez/PycharmProjects/MedSAM/bounding_box/data/labels"         # Where YOLO .txt labels live (or will be written)
+yolo_split:  "/Users/carlosperez/PycharmProjects/MedSAM/bounding_box/data/yolo_split"         # Output split root (images/ + labels/)
+yolo_aug:    "/Users/carlosperez/PycharmProjects/MedSAM/bounding_box/data/yolo_split_aug"           # Output augmented dataset
+yolo_roi:    "/Users/carlosperez/PycharmProjects/MedSAM/bounding_box/data/yolo_split_cupROI"           # Cup-ROI dataset output
+viz_out:     "/Users/carlosperez/PycharmProjects/MedSAM/bounding_box/data/viz_labels"            # Visualizations output folder
+
+# ---- Which stages to run ----
+all: true                     # [true, false] | If true, runs: [masks, split, augment, roi, viz]
+steps: None                   # ["masks", "split", "augment", "roi", "viz"] | Use this when 'all' is false
+
+# ---- Small subset mode (E2E sanity check) ----
+subset_n: 5                    # If >0, run on a random subset of N items
+subset_seed: 1234              # RNG seed for subset sampling
+subset_copy: false             # true = copy files; false = symlink
+# Subset is applied only if the FIRST stage is 'masks' or 'split'
+
+# ---- Common flags ----
+write_yaml: true               # Write data.yaml for split/augment where supported
+dry_run: false                 # Print the commands instead of executing them
+verbose: false                 # Verbose mode for underlying tools
+
+# ---- masks_to_boxes.py ----
+disc_masks: "/Users/carlosperez/OneDrive_UBC/Ipek_Carlos/GlaucomaDatasets/SMDG-19/optic-disc/optic-disc"                 # Optic disc mask directory
+cup_masks: "/Users/carlosperez/OneDrive_UBC/Ipek_Carlos/GlaucomaDatasets/SMDG-19/optic-cup/optic-cup"                  # Optic cup mask directory
+pad_pct: 0.0                   # Expand boxes by this fraction of max(W,H)
+min_area_px: 25                # Min CC area in mask (pixels)
+largest_only: false            # Keep only the largest connected component
+require_both: false            # Keep only samples that have BOTH disc and cup
+recursive: false               # Recurse under images_root when searching images
+masks_extra: ""                # Extra raw args to append
+
+# ---- split_yolo.py ----
+val_frac: 0.15                 # Validation fraction (by patient)
+test_frac: 0.15                # Test fraction (by patient)
+seed: 1337                     # RNG for patient split
+copy: false                    # Copy instead of symlink into split folders
+patient_regex: ""              # Regex with ONE capturing group for patient id
+split_extra: ""                # Extra raw args to append
+
+# ---- augment_yolo_ds.py ----
+multiplier: 2                  # Augmented copies per original (Albumentations)
+out_ext: ".jpg"                # Output extension for all augmented images
+augment_splits: ["train","val","test"]   # Which splits to process
+include_images_without_labels: true       # Also include images with no labels (create negatives)
+
+# Tiling (grid sweep)
+enable_tiling: true
+tile_size: 512                 # Square tile size (px)
+tile_overlap: 0.40             # Overlap fraction [0, 0.95]
+min_tile_vis: 0.05             # Min fraction of object area to keep the box
+keep_empty_tiles: true         # Keep tiles that contain no boxes (negatives)
+tile_from_aug: false           # Also tile each augmented image
+
+# Zoom crops (object-centric)
+enable_zoom_crops: true
+zoom_scales: [0.35, 0.5, 0.7]  # Fractions of the shorter side (smaller = more zoom)
+zoom_per_obj: 2                # Jittered crops per object per scale
+zoom_on: "both"                # 'disc' | 'cup' | 'both' | 'any'
+zoom_out_size: 640             # Resize zoom crops to this square size; 0 = keep native
+zoom_jitter: 0.05              # Random center jitter as a fraction of crop side
+zoom_min_vis: 0.10             # Min fraction of object area that must appear inside crop
+zoom_from_aug: false           # Also generate zoom crops from augmented images
+zoom_keep_empty: true          # Keep zoom crops even if they end up with no boxes (negatives)
+
+# Multi-scale sliding zoom sweep (covers whole image)
+enable_zoom_sweep: true
+zoom_sweep_scales: [0.35, 0.5, 0.7]  # Fractions of the shorter side
+zoom_sweep_overlap: 0.25             # Overlap fraction [0, 0.95]
+zoom_sweep_min_vis: 0.10             # Min fraction of object area required to keep a box
+zoom_sweep_keep_empty: true          # Keep sweep crops even if no boxes (negatives)
+zoom_sweep_out_size: 640             # Resize sweep crops to this square size; 0 = keep native
+zoom_sweep_from_aug: false           # Also sweep the augmented images
+
+augment_extra: ""              # Extra raw args to append directly to augment_yolo_ds.py
+
+# ---- build_cup_roi_dataset.py ----
+roi_pad_pct: 0.10              # Padding fraction around disc to form ROI (cup-only dataset)
+keep_roi_negatives: false      # Keep ROI crops even if cup not visible
+roi_extra: ""                  # Extra raw args to append
+
+# ---- viz_yolo_two_boxes.py ----
+viz_sample: 12                 # Number of random samples to visualize
+viz_alpha: 0.25                # Box fill transparency
+viz_save_crops: false          # Also save OD/OC crops
+viz_make_montage: false        # Save side-by-side [original | annotated]
+viz_extra: ""                  # Extra raw args to append
