@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# split_yolo_by_patient.py
+# split_yolo.py
 """
 Generic YOLO dataset splitter with patient-wise separation.
 
