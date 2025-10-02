@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# masks_to_yolo_boxes_smdg.py — process ONLY images that have a segmentation
+# masks_to_boxes.py — process ONLY images that have a segmentation
 import argparse
 import csv
 from pathlib import Path
