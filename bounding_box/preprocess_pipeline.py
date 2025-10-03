@@ -138,49 +138,57 @@ def resolve_defaults(project_dir: Path) -> dict:
     return defaults
 
 # ------------------------- subset builders (single-dataset) -------------------------
-
-def build_subset_for_masks_stage(
+def build_subset_for_masks_stage_multi(
     subset_base: Path,
-    images_root: Path,
-    disc_masks: Path,
-    cup_masks: Path,
+    datasets: List[dict],
     n: int,
     seed: int,
     copy: bool = False,
-) -> Tuple[Path, Path, Path, List[str]]:
+    require_both_default: bool = False,
+) -> Tuple[List[dict], List[tuple]]:
     """
-    Prepare a small subset for 'masks' stage:
-      subset_images_root/, subset_disc_masks/, subset_cup_masks/
-    Returns (images_root', disc_masks', cup_masks', stems)
+    Build a tiny per-dataset filesystem with only N sampled items total.
+    Returns (new_datasets_list_with_overridden_paths, sampled_entries).
+
+    Change: we now shuffle ALL candidates across all datasets using the seed,
+    then take the first N. This guarantees cross-dataset mixing.
     """
-    random.seed(seed)
-    _ensure_dir(subset_base)
-    s_images = subset_base / "images"
-    s_disc   = subset_base / "disc_masks"
-    s_cup    = subset_base / "cup_masks"
-    for d in (s_images, s_disc, s_cup):
-        _ensure_dir(d)
+    rng = random.Random(seed)
 
-    img_map  = stem_map_by_first_match(images_root, IMG_EXTS)
-    disc_map = stem_map_by_first_match(disc_masks, IMG_EXTS)
-    cup_map  = stem_map_by_first_match(cup_masks,  IMG_EXTS)
+    # Gather all candidates from every dataset
+    choices: List[tuple] = []
+    for ds in datasets:
+        choices.extend(_collect_candidates_for_dataset(ds, require_both_default=require_both_default))
 
-    # Prefer stems that have at least one mask present
-    candidate_stems = [st for st in img_map if (st in disc_map) or (st in cup_map)]
-    if not candidate_stems:
-        raise SystemExit("[ERR] No images with corresponding masks found for subset.")
-    stems = random.sample(candidate_stems, n) if (n > 0 and n < len(candidate_stems)) else candidate_stems
+    if not choices:
+        raise SystemExit("[ERR] No candidate images with masks found across datasets.")
 
-    for st in stems:
-        safe_link(img_map[st], s_images / img_map[st].name, copy=copy)
-        if st in disc_map:
-            safe_link(disc_map[st], s_disc / disc_map[st].name, copy=copy)
-        if st in cup_map:
-            safe_link(cup_map[st], s_cup / cup_map[st].name, copy=copy)
+    # Shuffle globally across datasets, then slice
+    rng.shuffle(choices)
+    sampled = choices[: min(n, len(choices))] if n > 0 else choices
 
-    print(f"[SUBSET] masks-stage subset: {len(stems)} items → {subset_base}")
-    return s_images, s_disc, s_cup, stems
+    # Prepare per-dataset subset roots
+    new_datasets: List[dict] = []
+    for ds in datasets:
+        tag = ds["tag"]
+        s_img  = subset_base / "images"     / tag
+        s_disc = subset_base / "disc_masks" / tag
+        s_cup  = subset_base / "cup_masks"  / tag
+        for d in (s_img, s_disc, s_cup):
+            _ensure_dir(d)
+        new_datasets.append({**ds,
+            "images_root": str(s_img),
+            "disc_masks":  str(s_disc),
+            "cup_masks":   str(s_cup),
+        })
 
+    # Link/copy the sampled files
+    for tag, stem, ip, dmp, cmp in sampled:
+        safe_link(ip,  subset_base / "images"     / tag / ip.name,  copy=copy)
+        if dmp: safe_link(dmp, subset_base / "disc_masks" / tag / dmp.name, copy=copy)
+        if cmp: safe_link(cmp, subset_base / "cup_masks"  / tag / cmp.name, copy=copy)
+
+    return new_datasets, sampled
 def build_subset_for_split_stage(
     subset_base: Path,
     labels_dir: Path,
@@ -188,39 +196,85 @@ def build_subset_for_split_stage(
     n: int,
     seed: int,
     copy: bool = False,
+    patient_regex: str | None = None,
 ) -> Tuple[Path, Path, List[str]]:
     """
     Prepare a small subset for 'split' stage:
-      subset_labels_dir/ with N labels, subset_images_root/ with matching images
+      subset_labels_dir/ with ~N labels, subset_images_root/ with matching images.
+    We *sample patients*, not individual labels, so a patient never gets split
+    across the subset. We then include all stems for the selected patients
+    until we reach ~N items (or we include all if n==0).
+
     Returns (labels_dir', images_root', stems)
     """
-    random.seed(seed)
+    rng = random.Random(seed)
     _ensure_dir(subset_base)
     s_labels = subset_base / "labels"
     s_images = subset_base / "images"
     for d in (s_labels, s_images):
         _ensure_dir(d)
 
-    lbl_files = sorted(labels_dir.glob("*.txt"))
-    if not lbl_files:
-        raise SystemExit("[ERR] No label files in labels_dir; cannot build subset for split stage.")
-    if n > 0 and n < len(lbl_files):
-        lbl_files = random.sample(lbl_files, n)
-
+    # Build image map
     img_map = stem_map_by_first_match(images_root, IMG_EXTS)
 
-    stems: List[str] = []
-    for lp in lbl_files:
+    # Collect labels
+    all_label_paths = sorted(labels_dir.glob("*.txt"))
+    if not all_label_paths:
+        raise SystemExit("[ERR] No label files in labels_dir; cannot build subset for split stage.")
+
+    # Patient id derivation (regex first, fallback: keep before last '-')
+    rx = re.compile(patient_regex, re.I) if patient_regex else None
+    def pid_from_stem(stem: str) -> str:
+        if rx:
+            m = rx.search(stem)
+            if m:
+                return m.group(1)
+        if "-" in stem:
+            return stem[: stem.rfind("-")]
+        return stem
+
+    # Group label paths by patient id (and keep only those with matching image)
+    by_pid: Dict[str, List[Path]] = {}
+    for lp in all_label_paths:
         st = lp.stem
         if st not in img_map:
             continue
+        by_pid.setdefault(pid_from_stem(st), []).append(lp)
+
+    if not by_pid:
+        raise SystemExit("[ERR] After matching labels to images, nothing remained for subset.")
+
+    # Shuffle patients and select until ~N items
+    pids = list(by_pid.keys())
+    rng.shuffle(pids)
+
+    selected_lbls: List[Path] = []
+    for pid in pids:
+        k = len(selected_lbls)
+        if n > 0 and k >= n:
+            break
+        # add all labels for this patient
+        selected_lbls.extend(by_pid[pid])
+
+    # If an explicit N was requested, trim the excess (still whole patients first)
+    if n > 0 and len(selected_lbls) > n:
+        selected_lbls = selected_lbls[:n]
+
+    # Link files
+    stems: List[str] = []
+    for lp in selected_lbls:
+        st = lp.stem
+        ip = img_map.get(st)
+        if not ip:
+            continue
         stems.append(st)
         safe_link(lp, s_labels / lp.name, copy=copy)
-        safe_link(img_map[st], s_images / img_map[st].name, copy=copy)
+        safe_link(ip, s_images / ip.name, copy=copy)
 
     if not stems:
-        raise SystemExit("[ERR] After sampling, no (image,label) pairs were found for subset.")
-    print(f"[SUBSET] split-stage subset: {len(stems)} items → {subset_base}")
+        raise SystemExit("[ERR] No (image,label) pairs were linked into the subset.")
+
+    print(f"[SUBSET] split-stage subset: {len(stems)} items across {len(pids)} patients (sampled) → {subset_base}")
     return s_labels, s_images, stems
 
 # ------------------------- subset builders (multi-dataset) -------------------------
@@ -1047,9 +1101,14 @@ def main():
             else:
                 if not args.disc_masks or not args.cup_masks:
                     raise SystemExit("[ERR] Stage 'masks' needs --disc_masks and --cup_masks when using --subset_n.")
-                s_images, s_disc, s_cup, _stems = build_subset_for_masks_stage(
-                    subset_root, _expand(args.images_root), _expand(args.disc_masks), _expand(args.cup_masks),
-                    n=args.subset_n, seed=args.subset_seed, copy=args.subset_copy
+                s_labels, s_images, _stems = build_subset_for_split_stage(
+                    subset_root,
+                    _expand(args.labels_dir),
+                    _expand(args.images_root),
+                    n=args.subset_n,
+                    seed=args.subset_seed,
+                    copy=args.subset_copy,
+                    patient_regex=args.patient_regex,  # <-- add this
                 )
                 args.images_root = s_images
                 args.disc_masks  = s_disc
