@@ -1,0 +1,114 @@
+# === Preprocessing Pipeline Config (YAML, HPC; multi-dataset) ===
+# Pass with:
+#   --config /scratch/st-ipor-1/cperez/MedSAM/bounding_box/preprocess/preprocess_pipeline_hpc.yaml
+
+# ---- Core project paths (outputs live on scratch) ----
+project_dir: "/scratch/st-ipor-1/cperez/MedSAM"
+labels_dir:  "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/labels"
+yolo_split:  "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/yolo_split"
+yolo_aug:    "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/yolo_split_aug"
+yolo_roi:    "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/yolo_split_cupROI"
+viz_out:     "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/viz_labels"
+
+# NOTE: When using the multi-dataset block below, these top-level inputs are ignored by the 'masks' stage.
+# They remain for backward-compatibility and for starting at later stages if needed.
+images_root: "/arc/project/st-ipor-1/carlosp/fundus_data/SMDG-19/full-fundus/full-fundus"
+disc_masks:  "/arc/project/st-ipor-1/carlosp/fundus_data/SMDG-19/optic-disc/optic-disc"
+cup_masks:   "/arc/project/st-ipor-1/carlosp/fundus_data/SMDG-19/optic-cup/optic-cup"
+
+# ---- Which stages to run ----
+all: true
+steps: null   # Use when 'all' is false, e.g., ["split","augment"]
+
+# ---- Small subset mode (E2E sanity check) ----
+subset_n: 0
+subset_seed: 1234
+subset_copy: false
+
+# ---- Common flags ----
+write_yaml: true
+dry_run: false
+verbose: false
+
+# ---- masks_to_boxes.py defaults (used if per-dataset key omitted) ----
+pad_pct: 0.0
+min_area_px: 25
+largest_only: false
+require_both: false
+recursive: false
+masks_extra: ""
+
+# ---- split_yolo.py ----
+val_frac: 0.15
+test_frac: 0.15
+seed: 1337
+copy: false
+patient_regex: ""   # set if you need a custom patient grouping rule
+split_extra: ""
+
+# ---- augment_yolo_ds.py ----
+multiplier: 2
+out_ext: ".jpg"
+augment_splits: ["train","val","test"]
+include_images_without_labels: true
+
+# Tiling (grid sweep)
+enable_tiling: true
+tile_size: 512
+tile_overlap: 0.40
+min_tile_vis: 0.05
+keep_empty_tiles: true
+tile_from_aug: false
+
+# Zoom crops (object-centric)
+enable_zoom_crops: true
+zoom_scales: [0.35, 0.5, 0.7]
+zoom_per_obj: 2
+zoom_on: "both"    # disc | cup | both | any
+zoom_out_size: 640
+zoom_jitter: 0.05
+zoom_min_vis: 0.10
+zoom_from_aug: false
+zoom_keep_empty: true
+
+# Multi-scale sliding zoom sweep (whole-image coverage)
+enable_zoom_sweep: true
+zoom_sweep_scales: [0.35, 0.5, 0.7]
+zoom_sweep_overlap: 0.25
+zoom_sweep_min_vis: 0.10
+zoom_sweep_keep_empty: true
+zoom_sweep_out_size: 640
+zoom_sweep_from_aug: false
+
+augment_extra: ""
+
+# ---- build_cup_roi_dataset.py ----
+roi_pad_pct: 0.10
+keep_roi_negatives: false
+roi_extra: ""
+
+# ---- viz_yolo_two_boxes.py ----
+viz_sample: 12
+viz_alpha: 0.25
+viz_save_crops: false
+viz_make_montage: false
+viz_extra: ""
+
+# ---- Multi-dataset (NEW): SMDG-19 + RIM-ONE on HPC ----
+datasets:
+  - tag: smdg19
+    images_root: "/arc/project/st-ipor-1/carlosp/fundus_data/SMDG-19/full-fundus/full-fundus"
+    disc_masks:  "/arc/project/st-ipor-1/carlosp/fundus_data/SMDG-19/optic-disc/optic-disc"
+    cup_masks:   "/arc/project/st-ipor-1/carlosp/fundus_data/SMDG-19/optic-cup/optic-cup"
+    recursive: false
+    exclude_name_contains: ["papila"]
+
+  - tag: rimone
+    images_root: "/arc/project/st-ipor-1/carlosp/fundus_data/Rime-One/Organized_Rim-One/fundus"
+    disc_masks:  "/arc/project/st-ipor-1/carlosp/fundus_data/Rime-One/Organized_Rim-One/optic-disc"
+    cup_masks:   "/arc/project/st-ipor-1/carlosp/fundus_data/Rime-One/Organized_Rim-One/optic-cup"
+    recursive: true   # often nested; safest to enable
+
+# Unionized images + labels (assembled on scratch, then used by split/augment/roi/viz)
+union_images_root: "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/_union/images"
+union_labels_dir:  "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/_union/labels"
