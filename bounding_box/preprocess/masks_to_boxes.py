@@ -3,10 +3,11 @@
 """
 Refactored, modular script to generate YOLO labels from disc/cup binary masks.
 
-Key behavior (unchanged from original):
+Key behavior:
 - Processes ONLY images that have at least one segmentation (disc or cup).
 - If --require_both is set, only keeps images with BOTH valid disc & cup boxes.
 - Can filter by dataset name parsed from filename stem ("<dataset>-<patient>").
+- NEW: Name-based include/exclude filters for images and masks.
 - Writes one YOLO .txt per image; writes a CSV summary with coordinates & flags.
 
 Designed for composition:
@@ -50,10 +51,23 @@ class M2BConfig:
     exclude_datasets: List[str]
     include_datasets: List[str]
 
+    # Name-based filters (case-insensitive substrings)
+    exclude_name_contains: List[str]
+    include_name_contains: List[str]
+
     recursive: bool
     verbose: bool
 
 # ------------------------- Small utilities --------------------------
+
+def name_ok(filename: str, ex_subs: List[str], in_subs: List[str]) -> bool:
+    """Return True if filename passes include/exclude substring filters."""
+    nm = filename.lower()
+    if ex_subs and any(s in nm for s in ex_subs):
+        return False
+    if in_subs and not any(s in nm for s in in_subs):
+        return False
+    return True
 
 def expand(p: str | Path) -> Path:
     """Expand ~ and resolve to absolute Path."""
@@ -198,22 +212,28 @@ def process_one_image(
     - Read masks (if present)
     - Post-process masks
     - Create YOLO lines & a CSV row dict
-    Returns a row dict (for CSV) or None if skipped.
+    Returns a row dict (for CSV) or None if filtered out.
     """
     stem = img_path.stem
     dataset, patient = stem_to_dataset_patient(stem)
 
-    # include/exclude filtering
+    # include/exclude dataset filtering
     if cfg.include_datasets and (dataset not in cfg.include_datasets):
         return None
     if dataset in cfg.exclude_datasets:
         return None
 
-    # Identify mask files (disc & cup)
+    # Find mask paths
     disc_mp = first_existing_with_stem(disc_dir, stem)
     cup_mp  = first_existing_with_stem(cup_dir,  stem)
 
-    # Skip if neither exists
+    # Apply name filters to mask filenames themselves
+    if disc_mp and not name_ok(disc_mp.name, cfg.exclude_name_contains, cfg.include_name_contains):
+        disc_mp = None
+    if cup_mp and not name_ok(cup_mp.name, cfg.exclude_name_contains, cfg.include_name_contains):
+        cup_mp = None
+
+    # Skip if neither mask exists (after name filters)
     if disc_mp is None and cup_mp is None:
         return {"_skip_reason": "no_mask"}
 
@@ -242,7 +262,7 @@ def process_one_image(
     if cfg.require_both and (dbox is None or cbox is None):
         return {"_skip_reason": "require_both_no_valid_box"}
 
-    # If not require_both, accept if at least one box exists
+    # If not require_both, accept if at least one valid box exists
     if dbox is None and cbox is None:
         return {"_skip_reason": "no_valid_box"}
 
@@ -281,6 +301,13 @@ def run_masks_to_boxes(cfg: M2BConfig) -> None:
 
     img_paths = list_images(cfg.images, cfg.img_exts, cfg.recursive)
 
+    # Apply filename-based filtering to images
+    if cfg.exclude_name_contains or cfg.include_name_contains:
+        img_paths = [
+            p for p in img_paths
+            if name_ok(p.name, cfg.exclude_name_contains, cfg.include_name_contains)
+        ]
+
     cols = [
         "stem","image_path","W","H","dataset","patient",
         "disc_x1","disc_y1","disc_x2","disc_y2",
@@ -303,7 +330,7 @@ def run_masks_to_boxes(cfg: M2BConfig) -> None:
             total += 1
             row = process_one_image(ip, cfg.disc_masks, cfg.cup_masks, cfg)
 
-            # row is None → filtered out by include/exclude
+            # row is None → filtered out by include/exclude (dataset filters)
             if row is None:
                 continue
 
@@ -343,7 +370,7 @@ def parse_args() -> M2BConfig:
     ap.add_argument("--images",     default=f"{DATA_ROOT}/SMDG-19/full-fundus/full-fundus", help="Fundus image directory")
     ap.add_argument("--disc_masks", default=f"{DATA_ROOT}/SMDG-19/optic-disc/optic-disc",  help="Optic disc mask directory")
     ap.add_argument("--cup_masks",  default=f"{DATA_ROOT}/SMDG-19/optic-cup/optic-cup",    help="Optic cup mask directory")
-    ap.add_argument("--out_labels", default="./../data/labels",            help="Output folder for YOLO .txt labels")
+    ap.add_argument("--out_labels", default="./../data/labels",             help="Output folder for YOLO .txt labels")
     ap.add_argument("--out_csv",    default="./../data/labels_summary.csv", help="CSV summary path")
 
     # Processing policy
@@ -357,6 +384,12 @@ def parse_args() -> M2BConfig:
     # Dataset filtering
     ap.add_argument("--exclude_datasets", default="", help="Comma-separated dataset names to exclude")
     ap.add_argument("--include_datasets", default="", help="Comma-separated dataset names to include exclusively (whitelist)")
+
+    # Name-based filtering (images & masks)
+    ap.add_argument("--exclude_name_contains", default="",
+                    help="Comma-separated substrings (case-insensitive). Skip any image/mask whose filename contains any of these.")
+    ap.add_argument("--include_name_contains", default="",
+                    help="Comma-separated substrings (case-insensitive). If set, keep only files whose filename contains any of these.")
 
     # Misc
     ap.add_argument("--recursive", action="store_true", help="Recurse into subfolders under --images")
@@ -379,6 +412,9 @@ def parse_args() -> M2BConfig:
 
         exclude_datasets=[s.strip() for s in args.exclude_datasets.split(",") if s.strip()],
         include_datasets=[s.strip() for s in args.include_datasets.split(",") if s.strip()],
+
+        exclude_name_contains=[s.strip().lower() for s in args.exclude_name_contains.split(",") if s.strip()],
+        include_name_contains=[s.strip().lower() for s in args.include_name_contains.split(",") if s.strip()],
 
         recursive    = bool(args.recursive),
         verbose      = bool(args.verbose),

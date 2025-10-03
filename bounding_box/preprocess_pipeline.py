@@ -8,6 +8,8 @@ What's new
 - --config: load all arguments from a YAML file (with comments). CLI flags still override.
 - --write_config_template: write a commented YAML config you can edit and re-use.
 - --subset_n: run the pipeline on a small subset to test end-to-end quickly.
+- Multi-dataset support via YAML `datasets:`. Builds a union for split stage.
+- Name-based include/exclude filters passed to masks_to_boxes.py.
 
 Stages (enable any subset with --steps (list) or use --all):
   1) masks   -> Generate YOLO labels from disc/cup segmentation masks
@@ -86,6 +88,16 @@ def stem_map_by_first_match(root: Path, exts: Iterable[str]) -> Dict[str, Path]:
         out.setdefault(p.stem, p)
     return out
 
+def _name_matches_filters(name: str, include: list | None, exclude: list | None) -> bool:
+    n = name.lower()
+    if include:
+        if not any(str(s).lower() in n for s in include):
+            return False
+    if exclude:
+        if any(str(s).lower() in n for s in exclude):
+            return False
+    return True
+
 # ------------------------- defaults from project -------------------------
 
 def resolve_defaults(project_dir: Path) -> dict:
@@ -103,7 +115,7 @@ def resolve_defaults(project_dir: Path) -> dict:
     }
     return defaults
 
-# ------------------------- subset builders -------------------------
+# ------------------------- subset builders (single-dataset) -------------------------
 
 def build_subset_for_masks_stage(
     subset_base: Path,
@@ -189,6 +201,87 @@ def build_subset_for_split_stage(
     print(f"[SUBSET] split-stage subset: {len(stems)} items → {subset_base}")
     return s_labels, s_images, stems
 
+# ------------------------- subset builders (multi-dataset) -------------------------
+
+def _first_match_map(root: Path) -> Dict[str, Path]:
+    return stem_map_by_first_match(root, IMG_EXTS)
+
+def _collect_candidates_for_dataset(ds: dict, require_both_default: bool=False) -> List[tuple]:
+    """
+    Returns [(tag, stem, img_path, disc_path_or_None, cup_path_or_None), ...]
+    Only stems that have at least one mask (or both if require_both) and pass name filters.
+    """
+    tag = ds["tag"]
+    img_root  = _expand(ds["images_root"])
+    disc_root = _expand(ds["disc_masks"])
+    cup_root  = _expand(ds["cup_masks"])
+
+    img_map  = _first_match_map(img_root)
+    disc_map = _first_match_map(disc_root)
+    cup_map  = _first_match_map(cup_root)
+
+    include = ds.get("include_name_contains")
+    exclude = ds.get("exclude_name_contains")
+    require_both = bool(ds.get("require_both", require_both_default))
+
+    out = []
+    for stem, ip in img_map.items():
+        if not _name_matches_filters(ip.name, include, exclude):
+            continue
+        dmp = disc_map.get(stem)
+        cmp = cup_map.get(stem)
+        if require_both and (dmp is None or cmp is None):
+            continue
+        if dmp is None and cmp is None:
+            continue
+        out.append((tag, stem, ip, dmp, cmp))
+    return out
+
+def build_subset_for_masks_stage_multi(
+    subset_base: Path,
+    datasets: List[dict],
+    n: int,
+    seed: int,
+    copy: bool = False,
+    require_both_default: bool = False,
+) -> Tuple[List[dict], List[tuple]]:
+    """
+    Build a tiny per-dataset filesystem with only N sampled items total.
+    Returns (new_datasets_list_with_overridden_paths, sampled_entries).
+    """
+    random.seed(seed)
+    choices: List[tuple] = []
+    for ds in datasets:
+        choices.extend(_collect_candidates_for_dataset(ds, require_both_default=require_both_default))
+
+    if not choices:
+        raise SystemExit("[ERR] No candidate images with masks found across datasets.")
+
+    sampled = random.sample(choices, min(n, len(choices))) if n > 0 else choices
+
+    # Prepare per-dataset subset roots
+    new_datasets: List[dict] = []
+    for ds in datasets:
+        tag = ds["tag"]
+        s_img  = subset_base / "images"     / tag
+        s_disc = subset_base / "disc_masks" / tag
+        s_cup  = subset_base / "cup_masks"  / tag
+        for d in (s_img, s_disc, s_cup):
+            _ensure_dir(d)
+        new_datasets.append({**ds,
+            "images_root": str(s_img),
+            "disc_masks":  str(s_disc),
+            "cup_masks":   str(s_cup),
+        })
+
+    # Link/copy the sampled files
+    for tag, stem, ip, dmp, cmp in sampled:
+        safe_link(ip,  subset_base / "images"     / tag / ip.name,  copy=copy)
+        if dmp: safe_link(dmp, subset_base / "disc_masks" / tag / dmp.name, copy=copy)
+        if cmp: safe_link(cmp, subset_base / "cup_masks"  / tag / cmp.name, copy=copy)
+
+    return new_datasets, sampled
+
 # ------------------------- stage runners -------------------------
 
 def stage_masks_to_boxes(args, defaults) -> None:
@@ -209,7 +302,84 @@ def stage_masks_to_boxes(args, defaults) -> None:
     if args.recursive:               cmd += ["--recursive"]
     if args.verbose:                 cmd += ["--verbose"]
     if args.masks_extra:             cmd += shlex.split(args.masks_extra)
+    # pass-through of name-based filters (if provided)
+    if getattr(args, "masks_exclude_name_contains", ""):
+        cmd += ["--exclude_name_contains", args.masks_exclude_name_contains]
+    if getattr(args, "masks_include_name_contains", ""):
+        cmd += ["--include_name_contains", args.masks_include_name_contains]
     run_cmd(cmd, args.dry_run)
+
+def stage_masks_to_boxes_one_dataset(
+    script_path: Path,
+    out_labels_root: Path,
+    ds: dict,
+    verbose: bool,
+    dry_run: bool,
+):
+    def _csv(v):
+        return v if isinstance(v, str) else ",".join(map(str, v))
+    """
+    Call masks_to_boxes.py for a single dataset block into a per-dataset labels folder.
+    Keeps stems identical to image stems (no renaming here).
+    """
+    tag = ds["tag"]
+    out_labels = out_labels_root / tag
+    out_csv    = out_labels_root / f"labels_summary_{tag}.csv"
+    args = [
+        sys.executable, str(script_path),
+        "--images",     str(_expand(ds["images_root"])),
+        "--disc_masks", str(_expand(ds["disc_masks"])),
+        "--cup_masks",  str(_expand(ds["cup_masks"])),
+        "--out_labels", str(out_labels),
+        "--out_csv",    str(out_csv),
+    ]
+    # dataset-specific switches
+    if ds.get("pad_pct")        is not None: args += ["--pad_pct", str(ds["pad_pct"])]
+    if ds.get("min_area_px")    is not None: args += ["--min_area_px", str(ds["min_area_px"])]
+    if ds.get("largest_only"):                 args += ["--largest_only"]
+    if ds.get("require_both"):                args += ["--require_both"]
+    if ds.get("recursive"):                   args += ["--recursive"]
+    if verbose:                                args += ["--verbose"]
+    if ds.get("exclude_name_contains"):
+        args += ["--exclude_name_contains", _csv(ds["exclude_name_contains"])]
+    if ds.get("include_name_contains"):
+        args += ["--include_name_contains", _csv(ds["include_name_contains"])]
+    run_cmd(args, dry_run=dry_run)
+
+def stage_masks_multi(args, defaults, cfg_dict: dict):
+    """Run masks_to_boxes for each dataset in cfg['datasets'] and build union I/O for split."""
+    script = defaults["script_dir"] / "masks_to_boxes.py"
+    require_dir(script.parent, "preprocess script dir")
+
+    # Per-dataset labels will be placed under labels_dir/<TAG>
+    per_ds_labels_root = _expand(args.labels_dir)
+    _ensure_dir(per_ds_labels_root)
+
+    datasets: List[dict] = cfg_dict["datasets"]
+    for ds in datasets:
+        stage_masks_to_boxes_one_dataset(
+            script_path=script,
+            out_labels_root=per_ds_labels_root,
+            ds=ds,
+            verbose=args.verbose,
+            dry_run=args.dry_run,
+        )
+
+    # Build union images + labels for the split stage
+    union_images_root = _expand(cfg_dict.get("union_images_root", defaults["images_root_guess"]))
+    union_labels_dir  = _expand(cfg_dict.get("union_labels_dir",  per_ds_labels_root / "__ALL__"))
+
+    build_union_images_and_labels(
+        datasets=datasets,
+        per_dataset_labels_root=per_ds_labels_root,
+        union_images_root=union_images_root,
+        union_labels_dir=union_labels_dir,
+        prefer_copy=False,  # set True if your system forbids symlinks
+    )
+
+    # Redirect subsequent stages to use the union
+    args.images_root = union_images_root
+    args.labels_dir  = union_labels_dir
 
 def stage_split_yolo(args, defaults) -> None:
     script = defaults["script_dir"] / "split_yolo.py"
@@ -446,6 +616,148 @@ viz_make_montage: false        # Save side-by-side [original | annotated]
 viz_extra: ""                  # Extra raw args to append
 """
 
+# ---------- MULTI-DATASET SUPPORT ----------
+
+def cfg_has_datasets(cfg: dict) -> bool:
+    return isinstance(cfg.get("datasets"), list) and len(cfg["datasets"]) > 0
+
+def _log(msg: str):
+    print(f"[MDSET] {msg}")
+
+def _safe_link_or_copy(src: Path, dst: Path, do_copy: bool = False):
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        dst.unlink()
+    try:
+        if do_copy:
+            import shutil; shutil.copy2(src, dst)
+        else:
+            dst.symlink_to(src.resolve())
+    except Exception:
+        import shutil; shutil.copy2(src, dst)
+
+def stage_masks_to_boxes_one_dataset(
+    script_path: Path,
+    out_labels_root: Path,
+    ds: dict,
+    verbose: bool,
+    dry_run: bool,
+):
+    def _csv(v):
+        return v if isinstance(v, str) else ",".join(map(str, v))
+    """
+    Call masks_to_boxes.py for a single dataset block into a per-dataset labels folder.
+    Keeps stems identical to image stems (no renaming here).
+    """
+    tag = ds["tag"]
+    out_labels = out_labels_root / tag
+    out_csv    = out_labels_root / f"labels_summary_{tag}.csv"
+    args = [
+        sys.executable, str(script_path),
+        "--images",     str(_expand(ds["images_root"])),
+        "--disc_masks", str(_expand(ds["disc_masks"])),
+        "--cup_masks",  str(_expand(ds["cup_masks"])),
+        "--out_labels", str(out_labels),
+        "--out_csv",    str(out_csv),
+    ]
+    # dataset-specific switches
+    if ds.get("pad_pct")        is not None: args += ["--pad_pct", str(ds["pad_pct"])]
+    if ds.get("min_area_px")    is not None: args += ["--min_area_px", str(ds["min_area_px"])]
+    if ds.get("largest_only"):                 args += ["--largest_only"]
+    if ds.get("require_both"):                args += ["--require_both"]
+    if ds.get("recursive"):                   args += ["--recursive"]
+    if verbose:                                args += ["--verbose"]
+    if ds.get("exclude_name_contains"):
+        args += ["--exclude_name_contains", _csv(ds["exclude_name_contains"])]
+    if ds.get("include_name_contains"):
+        args += ["--include_name_contains", _csv(ds["include_name_contains"])]
+    run_cmd(args, dry_run=dry_run)
+
+def build_union_images_and_labels(
+    datasets: List[dict],
+    per_dataset_labels_root: Path,
+    union_images_root: Path,
+    union_labels_dir: Path,
+    prefer_copy: bool = False,
+) -> None:
+    """
+    Create a unified images root and labels dir by symlinking (or copying) from each dataset.
+    If a label stem collides, prefix the stem with '<tag>___' in BOTH the label and the image.
+    """
+    _ensure_dir(union_images_root)
+    _ensure_dir(union_labels_dir)
+
+    stem_seen: set[str] = set()
+    collisions = 0
+    added = 0
+
+    for ds in datasets:
+        tag = ds["tag"]
+        img_root = _expand(ds["images_root"])
+        lbl_dir  = per_dataset_labels_root / tag
+        if not lbl_dir.exists():
+            _log(f"labels for dataset '{tag}' not found; skipping")
+            continue
+
+        # map image stems under this dataset
+        img_map = stem_map_by_first_match(img_root, IMG_EXTS)
+
+        for lp in sorted(lbl_dir.glob("*.txt")):
+            st = lp.stem
+            ip = img_map.get(st)
+            if ip is None:
+                # label without matching image → skip
+                continue
+
+            final_stem = st
+            if final_stem in stem_seen:
+                final_stem = f"{tag}___{st}"
+                collisions += 1
+            stem_seen.add(final_stem)
+
+            # link/copy image and label into union
+            # keep original image extension
+            _safe_link_or_copy(ip, union_images_root / f"{final_stem}{ip.suffix}", do_copy=prefer_copy)
+            _safe_link_or_copy(lp, union_labels_dir / f"{final_stem}.txt", do_copy=prefer_copy)
+            added += 1
+
+    _log(f"union built: {added} pairs | collisions (prefixed) = {collisions}")
+
+def stage_masks_multi(args, defaults, cfg_dict: dict):
+    """Run masks_to_boxes for each dataset in cfg['datasets'] and build union I/O for split."""
+    script = defaults["script_dir"] / "masks_to_boxes.py"
+    require_dir(script.parent, "preprocess script dir")
+
+    # Per-dataset labels will be placed under labels_dir/<TAG>
+    per_ds_labels_root = _expand(args.labels_dir)
+    _ensure_dir(per_ds_labels_root)
+
+    datasets: List[dict] = cfg_dict["datasets"]
+    for ds in datasets:
+        stage_masks_to_boxes_one_dataset(
+            script_path=script,
+            out_labels_root=per_ds_labels_root,
+            ds=ds,
+            verbose=args.verbose,
+            dry_run=args.dry_run,
+        )
+
+    # Build union images + labels for the split stage
+    union_images_root = _expand(cfg_dict.get("union_images_root", defaults["images_root_guess"]))
+    union_labels_dir  = _expand(cfg_dict.get("union_labels_dir",  per_ds_labels_root / "__ALL__"))
+
+    build_union_images_and_labels(
+        datasets=datasets,
+        per_dataset_labels_root=per_ds_labels_root,
+        union_images_root=union_images_root,
+        union_labels_dir=union_labels_dir,
+        prefer_copy=False,  # set True if your system forbids symlinks
+    )
+
+    # Redirect subsequent stages to use the union
+    args.images_root = union_images_root
+    args.labels_dir  = union_labels_dir
+
 # ------------------------- CLI -------------------------
 
 def parse_args() -> argparse.Namespace:
@@ -503,6 +815,10 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--require_both", action="store_true", help="Keep only samples that have BOTH disc and cup.")
     ap.add_argument("--recursive",    action="store_true", help="Recurse under images_root when searching images.")
     ap.add_argument("--masks_extra",  default="", help="Raw extra args to append to masks_to_boxes.py")
+    ap.add_argument("--masks_exclude_name_contains", default="",
+                    help="Comma-separated substrings; skip any image/mask whose filename contains any of these (case-insensitive).")
+    ap.add_argument("--masks_include_name_contains", default="",
+                    help="Comma-separated substrings; if set, keep only files whose filename contains any of these (case-insensitive).")
 
     # split_yolo args
     ap.add_argument("--val_frac", type=float, default=0.15)
@@ -567,9 +883,12 @@ def parse_args() -> argparse.Namespace:
 
     args = ap.parse_args()
 
-    # Normalize steps: allow list in YAML or comma string on CLI
-    args.steps = normalize_steps(args.steps)
+    # expose raw YAML so main() can access datasets
+    if prelim.config:
+        args._raw_config = cfg
 
+    # Normalize steps
+    args.steps = normalize_steps(args.steps)
     return args
 
 # ------------------------- main -------------------------
@@ -609,33 +928,63 @@ def main():
         _ensure_dir(subset_root)
 
         if first_stage == "masks":
-            if not args.disc_masks or not args.cup_masks:
-                raise SystemExit("[ERR] Stage 'masks' needs --disc_masks and --cup_masks when using --subset_n.")
-            s_images, s_disc, s_cup, _stems = build_subset_for_masks_stage(
-                subset_root, _expand(args.images_root), _expand(args.disc_masks), _expand(args.cup_masks),
-                n=args.subset_n, seed=args.subset_seed, copy=args.subset_copy
-            )
-            args.images_root = s_images
-            args.disc_masks  = s_disc
-            args.cup_masks   = s_cup
-            args.labels_dir = subset_root / "labels"
-            args.yolo_split = subset_root / "yolo_split"
-            args.yolo_aug   = subset_root / "yolo_split_aug"
-            args.yolo_roi   = subset_root / "yolo_split_cupROI"
-            args.viz_out    = subset_root / "viz_labels"
-            subset_used = True
+            # MULTI-DATASET path
+            if hasattr(args, "_raw_config") and cfg_has_datasets(args._raw_config):
+                # Build a tiny per-dataset FS with only N total samples across all datasets
+                ds_subset, _sampled = build_subset_for_masks_stage_multi(
+                    subset_root,
+                    args._raw_config["datasets"],
+                    n=args.subset_n,
+                    seed=args.subset_seed,
+                    copy=args.subset_copy,
+                    require_both_default=bool(args.require_both),
+                )
+                # Override the YAML config for this run to point at the subset
+                args._raw_config = {
+                    **args._raw_config,
+                    "datasets": ds_subset,
+                    # Ensure union (for split stage) also lives under the subset root
+                    "union_images_root": str(subset_root / "union_images"),
+                    "union_labels_dir":  str(subset_root / "labels" / "__ALL__"),
+                }
+                # All downstream outputs live under subset root
+                args.labels_dir = subset_root / "labels"
+                args.yolo_split = subset_root / "yolo_split"
+                args.yolo_aug   = subset_root / "yolo_split_aug"
+                args.yolo_roi   = subset_root / "yolo_split_cupROI"
+                args.viz_out    = subset_root / "viz_labels"
+                subset_used = True
+
+            # SINGLE-DATASET path
+            else:
+                if not args.disc_masks or not args.cup_masks:
+                    raise SystemExit("[ERR] Stage 'masks' needs --disc_masks and --cup_masks when using --subset_n.")
+                s_images, s_disc, s_cup, _stems = build_subset_for_masks_stage(
+                    subset_root, _expand(args.images_root), _expand(args.disc_masks), _expand(args.cup_masks),
+                    n=args.subset_n, seed=args.subset_seed, copy=args.subset_copy
+                )
+                args.images_root = s_images
+                args.disc_masks  = s_disc
+                args.cup_masks   = s_cup
+                args.labels_dir  = subset_root / "labels"
+                args.yolo_split  = subset_root / "yolo_split"
+                args.yolo_aug    = subset_root / "yolo_split_aug"
+                args.yolo_roi    = subset_root / "yolo_split_cupROI"
+                args.viz_out     = subset_root / "viz_labels"
+                subset_used = True
 
         elif first_stage == "split":
+            # Works for both single- and multi-dataset as long as args.labels_dir points at a flat dir of .txt
             s_labels, s_images, _stems = build_subset_for_split_stage(
                 subset_root, _expand(args.labels_dir), _expand(args.images_root),
                 n=args.subset_n, seed=args.subset_seed, copy=args.subset_copy
             )
             args.labels_dir  = s_labels
             args.images_root = s_images
-            args.yolo_split = subset_root / "yolo_split"
-            args.yolo_aug   = subset_root / "yolo_split_aug"
-            args.yolo_roi   = subset_root / "yolo_split_cupROI"
-            args.viz_out    = subset_root / "viz_labels"
+            args.yolo_split  = subset_root / "yolo_split"
+            args.yolo_aug    = subset_root / "yolo_split_aug"
+            args.yolo_roi    = subset_root / "yolo_split_cupROI"
+            args.viz_out     = subset_root / "viz_labels"
             subset_used = True
         else:
             print(f"[WARN] --subset_n is applied only when the first stage is 'masks' or 'split'. "
@@ -649,14 +998,18 @@ def main():
     for s in stages:
         print(f"\n========== [STAGE: {s}{' (subset)' if subset_used else ''}] ==========")
         if s == "masks":
-            require_dir(args.images_root, "images_root")
-            require_dir(_expand(args.disc_masks), "disc_masks")
-            require_dir(_expand(args.cup_masks),  "cup_masks")
-            stage_masks_to_boxes(args, defaults)
+            # If datasets: run multi-dataset path; else fall back to single
+            if hasattr(args, "_raw_config") and cfg_has_datasets(args._raw_config):
+                stage_masks_multi(args, defaults, args._raw_config)
+            else:
+                require_dir(args.images_root, "images_root")
+                require_dir(_expand(args.disc_masks), "disc_masks")
+                require_dir(_expand(args.cup_masks),  "cup_masks")
+                stage_masks_to_boxes(args, defaults)
 
         elif s == "split":
-            require_dir(args.images_root, "images_root")
-            require_dir(args.labels_dir,  "labels_dir")
+            require_dir(args.images_root, "images_root")   # union if multi-dataset
+            require_dir(args.labels_dir,  "labels_dir")    # union if multi-dataset
             stage_split_yolo(args, defaults)
 
         elif s == "augment":
