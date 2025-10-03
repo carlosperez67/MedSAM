@@ -21,7 +21,7 @@ all: true
 steps: null  # Use when 'all' is false, e.g., ["masks","split","augment","roi","viz"]
 
 # ---- Small subset mode (E2E sanity check) ----
-subset_n: 5
+subset_n: 100
 subset_seed: 1234
 subset_copy: false
 
