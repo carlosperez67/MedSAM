@@ -10,6 +10,7 @@ What's new
 - --subset_n: run the pipeline on a small subset to test end-to-end quickly.
 - Multi-dataset support via YAML `datasets:`. Builds a union for split stage.
 - Name-based include/exclude filters passed to masks_to_boxes.py.
+- Augment stage now takes a YAML via --aug_yaml, or auto-builds one from pipeline params.
 
 Stages (enable any subset with --steps (list) or use --all):
   1) masks   -> Generate YOLO labels from disc/cup segmentation masks
@@ -98,6 +99,27 @@ def _name_matches_filters(name: str, include: list | None, exclude: list | None)
             return False
     return True
 
+def _to_float_list(v: Union[str, List[Any], None]) -> List[float]:
+    if v is None:
+        return []
+    if isinstance(v, list):
+        vals = []
+        for x in v:
+            try:
+                vals.append(float(x))
+            except Exception:
+                pass
+        return vals
+    # string
+    parts = [p.strip() for p in str(v).split(",") if p.strip()]
+    vals = []
+    for p in parts:
+        try:
+            vals.append(float(p))
+        except Exception:
+            pass
+    return vals
+
 # ------------------------- defaults from project -------------------------
 
 def resolve_defaults(project_dir: Path) -> dict:
@@ -116,49 +138,57 @@ def resolve_defaults(project_dir: Path) -> dict:
     return defaults
 
 # ------------------------- subset builders (single-dataset) -------------------------
-
-def build_subset_for_masks_stage(
+def build_subset_for_masks_stage_multi(
     subset_base: Path,
-    images_root: Path,
-    disc_masks: Path,
-    cup_masks: Path,
+    datasets: List[dict],
     n: int,
     seed: int,
     copy: bool = False,
-) -> Tuple[Path, Path, Path, List[str]]:
+    require_both_default: bool = False,
+) -> Tuple[List[dict], List[tuple]]:
     """
-    Prepare a small subset for 'masks' stage:
-      subset_images_root/, subset_disc_masks/, subset_cup_masks/
-    Returns (images_root', disc_masks', cup_masks', stems)
+    Build a tiny per-dataset filesystem with only N sampled items total.
+    Returns (new_datasets_list_with_overridden_paths, sampled_entries).
+
+    Change: we now shuffle ALL candidates across all datasets using the seed,
+    then take the first N. This guarantees cross-dataset mixing.
     """
-    random.seed(seed)
-    _ensure_dir(subset_base)
-    s_images = subset_base / "images"
-    s_disc   = subset_base / "disc_masks"
-    s_cup    = subset_base / "cup_masks"
-    for d in (s_images, s_disc, s_cup):
-        _ensure_dir(d)
+    rng = random.Random(seed)
 
-    img_map  = stem_map_by_first_match(images_root, IMG_EXTS)
-    disc_map = stem_map_by_first_match(disc_masks, IMG_EXTS)
-    cup_map  = stem_map_by_first_match(cup_masks,  IMG_EXTS)
+    # Gather all candidates from every dataset
+    choices: List[tuple] = []
+    for ds in datasets:
+        choices.extend(_collect_candidates_for_dataset(ds, require_both_default=require_both_default))
 
-    # Prefer stems that have at least one mask present
-    candidate_stems = [st for st in img_map if (st in disc_map) or (st in cup_map)]
-    if not candidate_stems:
-        raise SystemExit("[ERR] No images with corresponding masks found for subset.")
-    stems = random.sample(candidate_stems, n) if (n > 0 and n < len(candidate_stems)) else candidate_stems
+    if not choices:
+        raise SystemExit("[ERR] No candidate images with masks found across datasets.")
 
-    for st in stems:
-        safe_link(img_map[st], s_images / img_map[st].name, copy=copy)
-        if st in disc_map:
-            safe_link(disc_map[st], s_disc / disc_map[st].name, copy=copy)
-        if st in cup_map:
-            safe_link(cup_map[st], s_cup / cup_map[st].name, copy=copy)
+    # Shuffle globally across datasets, then slice
+    rng.shuffle(choices)
+    sampled = choices[: min(n, len(choices))] if n > 0 else choices
 
-    print(f"[SUBSET] masks-stage subset: {len(stems)} items → {subset_base}")
-    return s_images, s_disc, s_cup, stems
+    # Prepare per-dataset subset roots
+    new_datasets: List[dict] = []
+    for ds in datasets:
+        tag = ds["tag"]
+        s_img  = subset_base / "images"     / tag
+        s_disc = subset_base / "disc_masks" / tag
+        s_cup  = subset_base / "cup_masks"  / tag
+        for d in (s_img, s_disc, s_cup):
+            _ensure_dir(d)
+        new_datasets.append({**ds,
+            "images_root": str(s_img),
+            "disc_masks":  str(s_disc),
+            "cup_masks":   str(s_cup),
+        })
 
+    # Link/copy the sampled files
+    for tag, stem, ip, dmp, cmp in sampled:
+        safe_link(ip,  subset_base / "images"     / tag / ip.name,  copy=copy)
+        if dmp: safe_link(dmp, subset_base / "disc_masks" / tag / dmp.name, copy=copy)
+        if cmp: safe_link(cmp, subset_base / "cup_masks"  / tag / cmp.name, copy=copy)
+
+    return new_datasets, sampled
 def build_subset_for_split_stage(
     subset_base: Path,
     labels_dir: Path,
@@ -166,39 +196,85 @@ def build_subset_for_split_stage(
     n: int,
     seed: int,
     copy: bool = False,
+    patient_regex: str | None = None,
 ) -> Tuple[Path, Path, List[str]]:
     """
     Prepare a small subset for 'split' stage:
-      subset_labels_dir/ with N labels, subset_images_root/ with matching images
+      subset_labels_dir/ with ~N labels, subset_images_root/ with matching images.
+    We *sample patients*, not individual labels, so a patient never gets split
+    across the subset. We then include all stems for the selected patients
+    until we reach ~N items (or we include all if n==0).
+
     Returns (labels_dir', images_root', stems)
     """
-    random.seed(seed)
+    rng = random.Random(seed)
     _ensure_dir(subset_base)
     s_labels = subset_base / "labels"
     s_images = subset_base / "images"
     for d in (s_labels, s_images):
         _ensure_dir(d)
 
-    lbl_files = sorted(labels_dir.glob("*.txt"))
-    if not lbl_files:
-        raise SystemExit("[ERR] No label files in labels_dir; cannot build subset for split stage.")
-    if n > 0 and n < len(lbl_files):
-        lbl_files = random.sample(lbl_files, n)
-
+    # Build image map
     img_map = stem_map_by_first_match(images_root, IMG_EXTS)
 
-    stems: List[str] = []
-    for lp in lbl_files:
+    # Collect labels
+    all_label_paths = sorted(labels_dir.glob("*.txt"))
+    if not all_label_paths:
+        raise SystemExit("[ERR] No label files in labels_dir; cannot build subset for split stage.")
+
+    # Patient id derivation (regex first, fallback: keep before last '-')
+    rx = re.compile(patient_regex, re.I) if patient_regex else None
+    def pid_from_stem(stem: str) -> str:
+        if rx:
+            m = rx.search(stem)
+            if m:
+                return m.group(1)
+        if "-" in stem:
+            return stem[: stem.rfind("-")]
+        return stem
+
+    # Group label paths by patient id (and keep only those with matching image)
+    by_pid: Dict[str, List[Path]] = {}
+    for lp in all_label_paths:
         st = lp.stem
         if st not in img_map:
             continue
+        by_pid.setdefault(pid_from_stem(st), []).append(lp)
+
+    if not by_pid:
+        raise SystemExit("[ERR] After matching labels to images, nothing remained for subset.")
+
+    # Shuffle patients and select until ~N items
+    pids = list(by_pid.keys())
+    rng.shuffle(pids)
+
+    selected_lbls: List[Path] = []
+    for pid in pids:
+        k = len(selected_lbls)
+        if n > 0 and k >= n:
+            break
+        # add all labels for this patient
+        selected_lbls.extend(by_pid[pid])
+
+    # If an explicit N was requested, trim the excess (still whole patients first)
+    if n > 0 and len(selected_lbls) > n:
+        selected_lbls = selected_lbls[:n]
+
+    # Link files
+    stems: List[str] = []
+    for lp in selected_lbls:
+        st = lp.stem
+        ip = img_map.get(st)
+        if not ip:
+            continue
         stems.append(st)
         safe_link(lp, s_labels / lp.name, copy=copy)
-        safe_link(img_map[st], s_images / img_map[st].name, copy=copy)
+        safe_link(ip, s_images / ip.name, copy=copy)
 
     if not stems:
-        raise SystemExit("[ERR] After sampling, no (image,label) pairs were found for subset.")
-    print(f"[SUBSET] split-stage subset: {len(stems)} items → {subset_base}")
+        raise SystemExit("[ERR] No (image,label) pairs were linked into the subset.")
+
+    print(f"[SUBSET] split-stage subset: {len(stems)} items across {len(pids)} patients (sampled) → {subset_base}")
     return s_labels, s_images, stems
 
 # ------------------------- subset builders (multi-dataset) -------------------------
@@ -346,6 +422,56 @@ def stage_masks_to_boxes_one_dataset(
         args += ["--include_name_contains", _csv(ds["include_name_contains"])]
     run_cmd(args, dry_run=dry_run)
 
+def build_union_images_and_labels(
+    datasets: List[dict],
+    per_dataset_labels_root: Path,
+    union_images_root: Path,
+    union_labels_dir: Path,
+    prefer_copy: bool = False,
+) -> None:
+    """
+    Create a unified images root and labels dir by symlinking (or copying) from each dataset.
+    If a label stem collides, prefix the stem with '<tag>___' in BOTH the label and the image.
+    """
+    _ensure_dir(union_images_root)
+    _ensure_dir(union_labels_dir)
+
+    stem_seen: set[str] = set()
+    collisions = 0
+    added = 0
+
+    for ds in datasets:
+        tag = ds["tag"]
+        img_root = _expand(ds["images_root"])
+        lbl_dir  = per_dataset_labels_root / tag
+        if not lbl_dir.exists():
+            _log(f"labels for dataset '{tag}' not found; skipping")
+            continue
+
+        # map image stems under this dataset
+        img_map = stem_map_by_first_match(img_root, IMG_EXTS)
+
+        for lp in sorted(lbl_dir.glob("*.txt")):
+            st = lp.stem
+            ip = img_map.get(st)
+            if ip is None:
+                # label without matching image → skip
+                continue
+
+            final_stem = st
+            if final_stem in stem_seen:
+                final_stem = f"{tag}___{st}"
+                collisions += 1
+            stem_seen.add(final_stem)
+
+            # link/copy image and label into union
+            # keep original image extension
+            _safe_link_or_copy(ip, union_images_root / f"{final_stem}{ip.suffix}", do_copy=prefer_copy)
+            _safe_link_or_copy(lp, union_labels_dir / f"{final_stem}.txt", do_copy=prefer_copy)
+            added += 1
+
+    _log(f"union built: {added} pairs | collisions (prefixed) = {collisions}")
+
 def stage_masks_multi(args, defaults, cfg_dict: dict):
     """Run masks_to_boxes for each dataset in cfg['datasets'] and build union I/O for split."""
     script = defaults["script_dir"] / "masks_to_boxes.py"
@@ -381,6 +507,88 @@ def stage_masks_multi(args, defaults, cfg_dict: dict):
     args.images_root = union_images_root
     args.labels_dir  = union_labels_dir
 
+# ------------------------- augment YAML auto-builder -------------------------
+
+def _build_auto_aug_yaml_dict(args) -> Dict[str, Any]:
+    """Create an augment config dict compatible with augment_yolo_ds.py --aug_yaml."""
+    # Defaults for the Albumentations transform (match script defaults)
+    transform = {
+        "hflip_p": 0.5,
+        "vflip_p": 0.5,
+        "affine": {
+            "p": 0.7,
+            "scale": [0.9, 1.1],
+            "translate_percent": [-0.05, 0.05],
+            "rotate": [-15, 15],
+            "shear": [-5, 5],
+        },
+        "random_resized_crop": {
+            "p": 0.5,
+            "scale": [0.9, 1.0],
+            "ratio": [0.9, 1.1],
+        },
+        "color_jitter": {
+            "p": 0.5,
+            "brightness": 0.2,
+            "contrast": 0.2,
+            "saturation": 0.2,
+            "hue": 0.1,
+        },
+    }
+
+    zoom_scales = _to_float_list(getattr(args, "zoom_scales", None)) or [0.5, 0.7, 0.85]
+    sweep_scales = _to_float_list(getattr(args, "zoom_sweep_scales", None)) or [0.35, 0.5, 0.7]
+
+    cfg = {
+        "out_ext": getattr(args, "out_ext", ".jpg"),
+        "multiplier": int(getattr(args, "multiplier", 2)),
+        "include_images_without_labels": bool(getattr(args, "include_images_without_labels", False)),
+        "seed": int(getattr(args, "seed", 1337)),
+        "write_yaml": bool(getattr(args, "write_yaml", True)),
+        "transform": transform,
+        "tiling": {
+            "enable": bool(getattr(args, "enable_tiling", False)),
+            "tile_size": int(getattr(args, "tile_size", 512)),
+            "tile_overlap": float(getattr(args, "tile_overlap", 0.2)),
+            "min_tile_vis": float(getattr(args, "min_tile_vis", 0.2)),
+            "keep_empty_tiles": bool(getattr(args, "keep_empty_tiles", False)),
+            "from_aug": bool(getattr(args, "tile_from_aug", False)),
+        },
+        "zoom_crops": {
+            "enable": bool(getattr(args, "enable_zoom_crops", False)),
+            "scales": zoom_scales,
+            "per_obj": int(getattr(args, "zoom_per_obj", 1)),
+            "on": getattr(args, "zoom_on", "both"),
+            "out_size": int(getattr(args, "zoom_out_size", 640)),
+            "jitter": float(getattr(args, "zoom_jitter", 0.05)),
+            "min_vis": float(getattr(args, "zoom_min_vis", 0.2)),
+            "from_aug": bool(getattr(args, "zoom_from_aug", False)),
+            "keep_empty": bool(getattr(args, "zoom_keep_empty", False)),
+        },
+        "zoom_sweep": {
+            "enable": bool(getattr(args, "enable_zoom_sweep", False)),
+            "scales": sweep_scales,
+            "overlap": float(getattr(args, "zoom_sweep_overlap", 0.25)),
+            "min_vis": float(getattr(args, "zoom_sweep_min_vis", 0.2)),
+            "keep_empty": bool(getattr(args, "zoom_sweep_keep_empty", False)),
+            "out_size": int(getattr(args, "zoom_sweep_out_size", 640)),
+            "from_aug": bool(getattr(args, "zoom_sweep_from_aug", False)),
+        },
+    }
+    return cfg
+
+def _write_auto_aug_yaml(args, out_root: Path) -> Path:
+    """Write the auto-generated augment YAML into out_root and return the path."""
+    _ensure_dir(out_root)
+    cfg = _build_auto_aug_yaml_dict(args)
+    aug_yaml = out_root / "_auto_augment.yaml"
+    with open(aug_yaml, "w") as f:
+        yaml.safe_dump(cfg, f, sort_keys=False)
+    print(f"[INFO] Auto-generated augment config → {aug_yaml}")
+    return aug_yaml
+
+# ------------------------- stage: split / augment / roi / viz -------------------------
+
 def stage_split_yolo(args, defaults) -> None:
     script = defaults["script_dir"] / "split_yolo.py"
     require_dir(script.parent, "preprocess script dir")
@@ -401,68 +609,37 @@ def stage_split_yolo(args, defaults) -> None:
     run_cmd(cmd, args.dry_run)
 
 def stage_augment(args, defaults) -> None:
+    """
+    New behavior:
+      - If args.aug_yaml is provided (or set in config), pass it through to augment_yolo_ds.py.
+      - Otherwise, synthesize an augment YAML from pipeline args and pass that.
+      - We no longer pass per-augmentation CLI flags; they belong in the augment YAML.
+    """
     script = defaults["script_dir"] / "augment_yolo_ds.py"
     require_dir(script.parent, "preprocess script dir")
+
+    # Ensure output root exists so we have a place to put the auto YAML
+    _ensure_dir(args.yolo_aug)
+
+    aug_yaml_path: Path
+    if getattr(args, "aug_yaml", None):
+        aug_yaml_path = _expand(args.aug_yaml)
+    else:
+        aug_yaml_path = _write_auto_aug_yaml(args, _expand(args.yolo_aug))
+
     cmd = [
         sys.executable, str(script),
         "--project_dir", str(args.project_dir),
         "--data_root",   str(args.yolo_split),
         "--out_root",    str(args.yolo_aug),
-        "--multiplier",  str(args.multiplier),
-        "--out_ext",     str(args.out_ext),
+        "--aug_yaml",    str(aug_yaml_path),
     ]
-    # splits
+
+    # splits (still a CLI concern)
     if args.augment_splits:
-        cmd += ["--splits"] + args.augment_splits
-
-    # negatives
-    if args.include_images_without_labels:
-        cmd += ["--include_images_without_labels"]
-
-    if args.write_yaml:
-        cmd += ["--write_yaml"]
-
-    # tiling
-    if args.enable_tiling:
-        cmd += ["--enable_tiling",
-                "--tile_size",    str(args.tile_size),
-                "--tile_overlap", str(args.tile_overlap),
-                "--min_tile_vis", str(args.min_tile_vis)]
-        if args.keep_empty_tiles:
-            cmd += ["--keep_empty_tiles"]
-        if args.tile_from_aug:
-            cmd += ["--tile_from_aug"]
-
-    # object-centric zooms
-    if args.enable_zoom_crops:
-        cmd += ["--enable_zoom_crops",
-                "--zoom_scales",   (args.zoom_scales if isinstance(args.zoom_scales, str)
-                                    else ",".join(map(str, args.zoom_scales))),
-                "--zoom_per_obj",  str(args.zoom_per_obj),
-                "--zoom_on",       args.zoom_on,
-                "--zoom_out_size", str(args.zoom_out_size),
-                "--zoom_jitter",   str(args.zoom_jitter),
-                "--zoom_min_vis",  str(args.zoom_min_vis)]
-        if args.zoom_from_aug:
-            cmd += ["--zoom_from_aug"]
-        if args.zoom_keep_empty:
-            cmd += ["--zoom_keep_empty"]
-
-    # multi-scale zoom sweep
-    if args.enable_zoom_sweep:
-        cmd += ["--enable_zoom_sweep",
-                "--zoom_sweep_scales", (args.zoom_sweep_scales if isinstance(args.zoom_sweep_scales, str)
-                                        else ",".join(map(str, args.zoom_sweep_scales))),
-                "--zoom_sweep_overlap",   str(args.zoom_sweep_overlap),
-                "--zoom_sweep_min_vis",   str(args.zoom_sweep_min_vis),
-                "--zoom_sweep_out_size",  str(args.zoom_sweep_out_size)]
-        if args.zoom_sweep_keep_empty:
-            cmd += ["--zoom_sweep_keep_empty"]
-        if args.zoom_sweep_from_aug:
-            cmd += ["--zoom_sweep_from_aug"]
-
-    if args.augment_extra:
-        cmd += shlex.split(args.augment_extra)
+        splits = args.augment_splits if isinstance(args.augment_splits, list) else normalize_list(args.augment_splits)
+        if splits:
+            cmd += ["--splits"] + splits
 
     run_cmd(cmd, args.dry_run)
 
@@ -574,34 +751,48 @@ masks_extra: ""                # Extra raw args to append
 # ---- split_yolo.py ----
 val_frac: 0.15                 # Validation fraction (by patient)
 test_frac: 0.15                # Test fraction (by patient)
-seed: 1337                     # RNG for patient split
+seed: 1337                     # RNG for patient split AND augment default
 copy: false                    # Copy instead of symlink into split folders
 patient_regex: ""              # Regex with ONE capturing group for patient id
 split_extra: ""                # Extra raw args to append
 
 # ---- augment_yolo_ds.py ----
-multiplier: 2                  # Augmented copies per original (Albumentations)
-out_ext: ".jpg"                # Output extension for all augmented images
+# Provide an external augment YAML, OR leave blank to auto-generate from keys below.
+aug_yaml: ""                   # Path to augment config YAML (if provided, overrides keys below)
+multiplier: 2                  # Augmented copies per original (if auto-generating)
+out_ext: ".jpg"                # Output extension for augmented images (if auto-generating)
+augment_splits: ["train","val","test"]  # Which splits to process (CLI)
+include_images_without_labels: false     # If auto-generating YAML
 
-# Tiling (grid sweep)
+# Tiling (grid sweep) -- used ONLY if aug_yaml is empty and we auto-generate
 enable_tiling: false
-tile_size: 512                 # Square tile size (px)
-tile_overlap: 0.40             # Overlap fraction [0, 0.95]
-min_tile_vis: 0.05             # Min fraction of object area that must be visible to keep the box
-keep_empty_tiles: true         # Keep tiles that contain no boxes (negatives)
-tile_from_aug: false           # Also tile each augmented image
+tile_size: 512
+tile_overlap: 0.40
+min_tile_vis: 0.05
+keep_empty_tiles: true
+tile_from_aug: false
 
-# Zoom crops (object-centric)
+# Zoom crops (object-centric) -- used ONLY if aug_yaml is empty and we auto-generate
 enable_zoom_crops: false
-zoom_scales: [0.35, 0.5, 0.7]  # Fractions of the shorter side (smaller = more zoom)
-zoom_per_obj: 2                # Jittered crops per object per scale
-zoom_on: "both"                # 'disc' | 'cup' | 'both' | 'any'
-zoom_out_size: 640             # Resize zoom crops to this square size; 0 = keep native
-zoom_jitter: 0.05              # Random center jitter as a fraction of crop side
-zoom_min_vis: 0.10             # Min fraction of object area that must appear inside crop
-zoom_from_aug: false           # Also generate zoom crops from augmented images
-zoom_keep_empty: true          # Keep zoom crops even if they end up with no boxes (negatives)
-augment_extra: ""              # Extra raw args to append
+zoom_scales: [0.35, 0.5, 0.7]
+zoom_per_obj: 2
+zoom_on: "both"
+zoom_out_size: 640
+zoom_jitter: 0.05
+zoom_min_vis: 0.10
+zoom_from_aug: false
+zoom_keep_empty: true
+
+# Multi-scale sliding zoom sweep (covers whole image) -- only if auto-generating
+enable_zoom_sweep: false
+zoom_sweep_scales: [0.35, 0.5, 0.7]
+zoom_sweep_overlap: 0.25
+zoom_sweep_min_vis: 0.10
+zoom_sweep_keep_empty: true
+zoom_sweep_out_size: 640
+zoom_sweep_from_aug: false
+
+augment_extra: ""              # (deprecated) no longer used
 
 # ---- build_cup_roi_dataset.py ----
 roi_pad_pct: 0.10              # Padding fraction around disc to form ROI (cup-only dataset)
@@ -672,56 +863,6 @@ def stage_masks_to_boxes_one_dataset(
     if ds.get("include_name_contains"):
         args += ["--include_name_contains", _csv(ds["include_name_contains"])]
     run_cmd(args, dry_run=dry_run)
-
-def build_union_images_and_labels(
-    datasets: List[dict],
-    per_dataset_labels_root: Path,
-    union_images_root: Path,
-    union_labels_dir: Path,
-    prefer_copy: bool = False,
-) -> None:
-    """
-    Create a unified images root and labels dir by symlinking (or copying) from each dataset.
-    If a label stem collides, prefix the stem with '<tag>___' in BOTH the label and the image.
-    """
-    _ensure_dir(union_images_root)
-    _ensure_dir(union_labels_dir)
-
-    stem_seen: set[str] = set()
-    collisions = 0
-    added = 0
-
-    for ds in datasets:
-        tag = ds["tag"]
-        img_root = _expand(ds["images_root"])
-        lbl_dir  = per_dataset_labels_root / tag
-        if not lbl_dir.exists():
-            _log(f"labels for dataset '{tag}' not found; skipping")
-            continue
-
-        # map image stems under this dataset
-        img_map = stem_map_by_first_match(img_root, IMG_EXTS)
-
-        for lp in sorted(lbl_dir.glob("*.txt")):
-            st = lp.stem
-            ip = img_map.get(st)
-            if ip is None:
-                # label without matching image → skip
-                continue
-
-            final_stem = st
-            if final_stem in stem_seen:
-                final_stem = f"{tag}___{st}"
-                collisions += 1
-            stem_seen.add(final_stem)
-
-            # link/copy image and label into union
-            # keep original image extension
-            _safe_link_or_copy(ip, union_images_root / f"{final_stem}{ip.suffix}", do_copy=prefer_copy)
-            _safe_link_or_copy(lp, union_labels_dir / f"{final_stem}.txt", do_copy=prefer_copy)
-            added += 1
-
-    _log(f"union built: {added} pairs | collisions (prefixed) = {collisions}")
 
 def stage_masks_multi(args, defaults, cfg_dict: dict):
     """Run masks_to_boxes for each dataset in cfg['datasets'] and build union I/O for split."""
@@ -828,41 +969,42 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--patient_regex", default="", help="Regex with ONE capturing group for patient id.")
     ap.add_argument("--split_extra", default="", help="Raw extra args to append to split_yolo.py")
 
-    # augment_yolo_ds args
-    ap.add_argument("--multiplier", type=int,   default=2,    help="Augmented copies per original.")
-    ap.add_argument("--out_ext",    default=".jpg",           help="Output extension for augmented images.")
+    # augment_yolo_ds args (paths/splits + aug_yaml only; per-aug knobs live in YAML)
     ap.add_argument("--augment_splits", default=None,
                     help="Comma list OR YAML list of splits to process, e.g. 'train,val' (defaults to train,val,test).")
+    ap.add_argument("--aug_yaml", default=None,
+                    help="Path to augment config YAML. If omitted, one is auto-generated from pipeline params.")
+
+    # Back-compat knobs (used only if we auto-generate an augment YAML)
+    ap.add_argument("--multiplier", type=int,   default=2,    help="[auto-aug] Augmented copies per original.")
+    ap.add_argument("--out_ext",    default=".jpg",           help="[auto-aug] Output extension for augmented images.")
     ap.add_argument("--include_images_without_labels", action="store_true",
-                    help="Include images that have no label file (create negatives).")
-
+                    help="[auto-aug] Include images that have no label file (create negatives).")
     # tiling
-    ap.add_argument("--enable_tiling",   action="store_true")
-    ap.add_argument("--tile_size",       type=int,   default=512)
-    ap.add_argument("--tile_overlap",    type=float, default=0.2)
-    ap.add_argument("--min_tile_vis",    type=float, default=0.2)
-    ap.add_argument("--keep_empty_tiles",action="store_true")
-    ap.add_argument("--tile_from_aug",   action="store_true")
+    ap.add_argument("--enable_tiling",   action="store_true", help="[auto-aug] Enable tiling.")
+    ap.add_argument("--tile_size",       type=int,   default=512, help="[auto-aug]")
+    ap.add_argument("--tile_overlap",    type=float, default=0.2, help="[auto-aug]")
+    ap.add_argument("--min_tile_vis",    type=float, default=0.2, help="[auto-aug]")
+    ap.add_argument("--keep_empty_tiles",action="store_true", help="[auto-aug]")
+    ap.add_argument("--tile_from_aug",   action="store_true", help="[auto-aug]")
     # zoom crops
-    ap.add_argument("--enable_zoom_crops", action="store_true")
-    ap.add_argument("--zoom_scales",       default="0.5,0.7,0.85")
-    ap.add_argument("--zoom_per_obj",      type=int, default=1)
-    ap.add_argument("--zoom_on",           default="both", choices=["disc","cup","both","any"])
-    ap.add_argument("--zoom_out_size",     type=int, default=640)
-    ap.add_argument("--zoom_jitter",       type=float, default=0.05)
-    ap.add_argument("--zoom_min_vis",      type=float, default=0.2)
-    ap.add_argument("--zoom_from_aug",     action="store_true")
-    ap.add_argument("--zoom_keep_empty",   action="store_true")
-    ap.add_argument("--augment_extra",     default="", help="Raw extra args to append to augment_yolo_ds.py")
-
+    ap.add_argument("--enable_zoom_crops", action="store_true", help="[auto-aug]")
+    ap.add_argument("--zoom_scales",       default="0.5,0.7,0.85", help="[auto-aug]")
+    ap.add_argument("--zoom_per_obj",      type=int, default=1, help="[auto-aug]")
+    ap.add_argument("--zoom_on",           default="both", choices=["disc","cup","both","any"], help="[auto-aug]")
+    ap.add_argument("--zoom_out_size",     type=int, default=640, help="[auto-aug]")
+    ap.add_argument("--zoom_jitter",       type=float, default=0.05, help="[auto-aug]")
+    ap.add_argument("--zoom_min_vis",      type=float, default=0.2, help="[auto-aug]")
+    ap.add_argument("--zoom_from_aug",     action="store_true", help="[auto-aug]")
+    ap.add_argument("--zoom_keep_empty",   action="store_true", help="[auto-aug]")
     # zoom sweep (whole-image)
-    ap.add_argument("--enable_zoom_sweep", action="store_true")
-    ap.add_argument("--zoom_sweep_scales", default="0.35,0.5,0.7")
-    ap.add_argument("--zoom_sweep_overlap", type=float, default=0.25)
-    ap.add_argument("--zoom_sweep_min_vis", type=float, default=0.2)
-    ap.add_argument("--zoom_sweep_keep_empty", action="store_true")
-    ap.add_argument("--zoom_sweep_out_size", type=int, default=640)
-    ap.add_argument("--zoom_sweep_from_aug", action="store_true")
+    ap.add_argument("--enable_zoom_sweep", action="store_true", help="[auto-aug]")
+    ap.add_argument("--zoom_sweep_scales", default="0.35,0.5,0.7", help="[auto-aug]")
+    ap.add_argument("--zoom_sweep_overlap", type=float, default=0.25, help="[auto-aug]")
+    ap.add_argument("--zoom_sweep_min_vis", type=float, default=0.2, help="[auto-aug]")
+    ap.add_argument("--zoom_sweep_keep_empty", action="store_true", help="[auto-aug]")
+    ap.add_argument("--zoom_sweep_out_size", type=int, default=640, help="[auto-aug]")
+    ap.add_argument("--zoom_sweep_from_aug", action="store_true", help="[auto-aug]")
 
     # build_cup_roi_dataset args
     ap.add_argument("--roi_pad_pct",      type=float, default=0.10)
@@ -959,9 +1101,14 @@ def main():
             else:
                 if not args.disc_masks or not args.cup_masks:
                     raise SystemExit("[ERR] Stage 'masks' needs --disc_masks and --cup_masks when using --subset_n.")
-                s_images, s_disc, s_cup, _stems = build_subset_for_masks_stage(
-                    subset_root, _expand(args.images_root), _expand(args.disc_masks), _expand(args.cup_masks),
-                    n=args.subset_n, seed=args.subset_seed, copy=args.subset_copy
+                s_labels, s_images, _stems = build_subset_for_split_stage(
+                    subset_root,
+                    _expand(args.labels_dir),
+                    _expand(args.images_root),
+                    n=args.subset_n,
+                    seed=args.subset_seed,
+                    copy=args.subset_copy,
+                    patient_regex=args.patient_regex,  # <-- add this
                 )
                 args.images_root = s_images
                 args.disc_masks  = s_disc
