@@ -18,7 +18,7 @@ SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
 PIPELINE="${SCRATCH_DIR}/bounding_box/preprocess/preprocess_pipeline.py"
 CONFIG="${SCRATCH_DIR}/bounding_box/preprocess/preprocess_pipeline_hpc.yaml"
-AUG_YAML="${SCRATCH_DIR}/bounding_box/preprocess/augment_config_hpc.yaml"  # referenced by CONFIG
+AUG_YAML="${SCRATCH_DIR}/bounding_box/preprocess/augment_config.yaml"
 
 # Create dirs (fix logs path)
 mkdir -p "$(dirname "${CONFIG}")" \
