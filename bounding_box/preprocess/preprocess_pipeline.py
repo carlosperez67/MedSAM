@@ -646,10 +646,15 @@ def stage_augment(args, defaults) -> None:
 def stage_build_roi(args, defaults) -> None:
     script = defaults["script_dir"] / "build_cup_roi_dataset.py"
     require_dir(script.parent, "preprocess script dir")
+
+    # choose source
+    src_root = args.yolo_aug if getattr(args, "roi_from_aug", False) else args.yolo_split
+    require_dir(src_root, "ROI source root")
+
     cmd = [
         sys.executable, str(script),
         "--project_dir", str(args.project_dir),
-        "--data_root",   str(args.yolo_split),
+        "--data_root",   str(src_root),
         "--out_root",    str(args.yolo_roi),
         "--pad_pct",     str(args.roi_pad_pct),
     ]
@@ -1010,6 +1015,11 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--roi_pad_pct",      type=float, default=0.10)
     ap.add_argument("--keep_roi_negatives", action="store_true", help="Keep ROI crops with no cup visible.")
     ap.add_argument("--roi_extra",        default="", help="Raw extra args to append to build_cup_roi_dataset.py")
+    ap.add_argument(
+        "--roi_from_aug",
+        action="store_true",
+        help="Use yolo_aug as ROI input instead of yolo_split."
+    )
 
     # viz args
     ap.add_argument("--viz_sample",      type=int,   default=12)

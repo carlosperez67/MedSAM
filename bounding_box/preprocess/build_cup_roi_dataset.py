@@ -39,16 +39,21 @@ IMG_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff")
 
 # --------------------- Config ------------------------
 
+# --- Config dataclass ---
+from typing import Optional
+
 @dataclass
 class CupROIConfig:
     project_dir: Path
-    data_root: Path             # input YOLO2-class root
+    data_root: Path             # base 2-class YOLO root (yolo_split)
     out_root: Path              # output single-class (cup) root
-    pad_pct: float              # padding (fraction of max(W,H)) around disc ROI
-    keep_negatives: bool        # keep crop even if no cup lands inside ROI
-    splits: List[str]           # which splits to process (must exist)
+    pad_pct: float
+    keep_negatives: bool
+    splits: List[str]
+    aug_root: Optional[Path] = None   # <— NEW: optional augmented root (yolo_split_aug)
 
 # --------------------- IO helpers --------------------
+
 
 def _expand(p: str | Path) -> Path:
     return Path(os.path.expanduser(str(p))).resolve()
@@ -70,6 +75,22 @@ def _has_nonempty_split(root: Path, split: str) -> bool:
     return img_dir.exists() and lbl_dir.exists() and any(img_dir.iterdir()) and any(lbl_dir.iterdir())
 
 # --------------------- Geometry ----------------------
+def _split_root_for(cfg: CupROIConfig, split: str) -> Path:
+    """
+    Prefer augmented root for this split when it exists and is non-empty; otherwise use base data_root.
+    """
+    def _nonempty(yolo_root: Path) -> bool:
+        imgs = yolo_root / "images" / split
+        lbls = yolo_root / "labels" / split
+        try:
+            return imgs.exists() and lbls.exists() and any(imgs.iterdir()) and any(lbls.iterdir())
+        except Exception:
+            return False
+
+    if cfg.aug_root and _nonempty(cfg.aug_root):
+        return cfg.aug_root
+    return cfg.data_root
+
 
 def clamp(v, lo, hi):
     return max(lo, min(hi, v))
@@ -240,18 +261,21 @@ def write_cup_yaml(out_root: Path) -> Path:
 # --------------------- Runner ------------------------
 
 def run_build_cup_roi(cfg: CupROIConfig) -> None:
-    # Prepare output dirs
+    # Prepare outputs
     for split in cfg.splits:
         _ensure_dir(cfg.out_root / "images" / split)
         _ensure_dir(cfg.out_root / "labels" / split)
 
     total, kept = 0, 0
+    chosen = {}  # for logging
 
     for split in cfg.splits:
-        img_dir = cfg.data_root / "images" / split
-        lbl_dir = cfg.data_root / "labels" / split
+        src_root = _split_root_for(cfg, split)         # <— NEW
+        chosen[split] = "aug" if (cfg.aug_root and src_root == cfg.aug_root) else "base"
+
+        img_dir = src_root / "images" / split
+        lbl_dir = src_root / "labels" / split
         if not img_dir.exists() or not lbl_dir.exists():
-            # Skip non-existent split silently
             continue
 
         out_img_dir = cfg.out_root / "images" / split
@@ -266,6 +290,7 @@ def run_build_cup_roi(cfg: CupROIConfig) -> None:
 
     print(f"[OK] Built ROI dataset at: {cfg.out_root}")
     print(f"  images processed: {total} | crops kept: {kept}")
+    print(f"  split sources: " + ", ".join(f"{s}={chosen.get(s,'-')}" for s in cfg.splits))
     print(f"[OK] Wrote data yaml: {yaml_path}")
 
 # --------------------- CLI ---------------------------
@@ -280,14 +305,19 @@ def build_cfg_from_cli() -> CupROIConfig:
     ap.add_argument("--out_root",  default=None,
                     help="Output ROI dataset root. Default: {PROJECT_DIR}/bounding_box/data/yolo_split_cupROI")
 
-    ap.add_argument("--pad_pct", type=float, default=0.10, help="Padding (fraction of max image dim) around disc ROI")
+    ap.add_argument("--pad_pct", type=float, default=0, help="Padding (fraction of max image dim) around disc ROI")
     ap.add_argument("--keep_negatives", action="store_true", help="Keep ROI crops with no cup visible")
     ap.add_argument("--splits", nargs="+", default=["train","val","test"], help="Splits to process")
+    ap.add_argument("--aug_root", default=None,
+                    help="Optional augmented YOLO root (e.g., yolo_split_aug). "
+                         "If provided, the builder will use its split when present; "
+                         "otherwise it falls back to --data_root.")
 
     args = ap.parse_args()
 
     project_dir = _expand(args.project_dir)
     data_root = _expand(args.data_root) if args.data_root else (project_dir / "bounding_box" / "data" / "yolo_split")
+    aug_root  = _expand(args.aug_root)  if args.aug_root  else None
     out_root  = _expand(args.out_root)  if args.out_root  else (project_dir / "bounding_box" / "data" / "yolo_split_cupROI")
 
     return CupROIConfig(
@@ -297,6 +327,7 @@ def build_cfg_from_cli() -> CupROIConfig:
         pad_pct     = float(args.pad_pct),
         keep_negatives = bool(args.keep_negatives),
         splits      = list(args.splits),
+        aug_root    = aug_root,   # <— NEW
     )
 
 def main():

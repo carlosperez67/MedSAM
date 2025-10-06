@@ -18,8 +18,8 @@ disc_masks:  "/arc/project/st-ipor-1/carlosp/fundus_data/SMDG-19/optic-disc/opti
 cup_masks:   "/arc/project/st-ipor-1/carlosp/fundus_data/SMDG-19/optic-cup/optic-cup"
 
 # ---- Which stages to run ----
-all: true
-steps: null   # Use when 'all' is false, e.g., ["split","augment"]
+all: false
+steps: ["roi"]   # Use when 'all' is false, e.g., ["split","augment"]
 
 # ---- Small subset mode (E2E sanity check) ----
 subset_n: 0
@@ -49,11 +49,12 @@ split_extra: ""
 
 # ---- augment_yolo_ds.py (external config) ----
 aug_yaml: "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/preprocess/augment_config.yaml"
-augment_splits: ["train","val","test"]
+augment_splits: ["train"]
 
 # ---- build_cup_roi_dataset.py ----
-roi_pad_pct: 0.10
+roi_pad_pct: 0.01
 keep_roi_negatives: false
+roi_from_aug: true
 roi_extra: ""
 
 # ---- viz_yolo_two_boxes.py ----

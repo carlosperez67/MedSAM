@@ -48,7 +48,7 @@ split_extra: ""
 
 # ---- augment_yolo_ds.py (external config) ----
 aug_yaml: "/Users/carlosperez/PycharmProjects/MedSAM/bounding_box/preprocess/augment_config.yaml"
-augment_splits: ["train","val","test"]   # which splits to augment; keep this here if you like
+augment_splits: ["train"]   # which splits to augment; keep this here if you like
 
 # ---- build_cup_roi_dataset.py ----
 roi_pad_pct: 0.10
