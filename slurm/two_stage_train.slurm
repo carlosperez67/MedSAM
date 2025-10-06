@@ -20,21 +20,21 @@ PROJECT_DIR="/scratch/st-ipor-1/cperez/MedSAM"
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
 
 BB_DIR="${PROJECT_DIR}/bounding_box"
-RUNS_DIR="${PROJECT_DIR}/bounding_box/runs/detect"
+RUNS_DIR="${BB_DIR}/runs/detect"
 
 # Clean split, augmented split, and prebuilt ROI split (from preprocess step)
-DATA_ROOT="${PROJECT_DIR}/bounding_box/data/yolo_split"       # clean (val/test)
-AUG_ROOT="${PROJECT_DIR}/bounding_box/data/yolo_split_aug"    # augmented (train)
-ROI_OUT="${PROJECT_DIR}/bounding_box/data/yolo_split_cupROI"  # prebuilt
+DATA_ROOT="${BB_DIR}/data/yolo_split"       # clean (val/test)
+AUG_ROOT="${BB_DIR}/data/yolo_split_aug"    # augmented (train)
+ROI_OUT="${BB_DIR}/data/yolo_split_cupROI"  # prebuilt (used by Stage B)
 
 # Optional output for two-stage inference
 OUT_JSONL="${BB_DIR}/data/two_stage_boxes.jsonl"
 
-# Names (match script defaults to avoid passing --name)
+# Experiment names (match script defaults)
 STAGEA_NAME="stageA_disc_only"
 STAGEB_NAME="stageB_cup_roi"
 
-mkdir -p "${PROJECT_DIR}/logs" "${RUNS_DIR}"
+mkdir -p "${PROJECT_DIR}/logs" "${RUNS_DIR}" "${BB_DIR}/data"
 cd "${PROJECT_DIR}"
 
 # --------------------------- Env -----------------------------------
@@ -49,7 +49,7 @@ echo "Runs dir     : ${RUNS_DIR}"
 nvidia-smi -L || echo "nvidia-smi not available"
 
 python - <<'PY'
-import torch, ultralytics, os, sys
+import torch, ultralytics
 print(f"[ENV] torch {torch.__version__} | cuda={torch.cuda.is_available()} | gpus={torch.cuda.device_count()}")
 print(f"[ENV] ultralytics {ultralytics.__version__}")
 PY
@@ -62,7 +62,6 @@ mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR"
 
 # --------------------------- Helpers -------------------------------
 die() { echo "[ERROR] $*" >&2; exit 1; }
-
 check_file() { [[ -f "$1" ]] || die "$2 not found: $1"; }
 check_dir()  { [[ -d "$1" ]] || die "$2 not found: $1"; }
 
@@ -72,15 +71,11 @@ run_stageA() {
   check_dir "${DATA_ROOT}" "Clean YOLO split"
   check_dir "${AUG_ROOT}"  "Augmented YOLO split"
 
-  # Use defaults wherever possible:
-  # - project_dir defaults to CWD (we cd'd to PROJECT_DIR)
-  # - weights default: PROJECT_DIR/weights/yolov8n.pt
-  # - runs root default: PROJECT_DIR/bounding_box/runs/detect
-  # - name default: ${STAGEA_NAME}
-  # Only pass what the defaults can’t infer: clean data root + augmented train root.
-  python "${BB_DIR}/train_stageA_disc_only.py" \
-    --data_root "${DATA_ROOT}" \
-    --aug_root  "${AUG_ROOT}" \
+  # Minimal CLI: pass only non-defaults (project root + mixed data roots).
+  python "${BB_DIR}/train/train_stageA_disc_only.py" \
+    --project_dir "${PROJECT_DIR}" \
+    --data_root   "${DATA_ROOT}" \
+    --aug_root    "${AUG_ROOT}" \
     --train_splits train
 
   local best="${RUNS_DIR}/${STAGEA_NAME}/weights/best.pt"
@@ -93,12 +88,10 @@ run_stageB() {
   echo "[STAGE B] Train cup-only detector on prebuilt ROI dataset…"
   check_dir "${ROI_OUT}" "ROI dataset"
 
-  # train_stageB_cup_roi.py uses sensible defaults:
-  #   data_root -> PROJECT_DIR/bounding_box/data/yolo_split_cupROI
-  #   runs root -> PROJECT_DIR/bounding_box/runs/detect
-  #   weights   -> PROJECT_DIR/weights/yolov8n.pt
-  # Since we cd'd to PROJECT_DIR and ROI_OUT matches the default path, pass no flags.
-  python "${BB_DIR}/train_stageB_cup_roi.py"
+  # Explicitly pass project_dir so defaults resolve to BB_DIR/{data,runs,weights}
+  # No other flags needed if you’re happy with defaults.
+  python "${BB_DIR}/train/train_stageB_cup_roi.py" \
+    --project_dir "${BB_DIR}"
 
   local best="${RUNS_DIR}/${STAGEB_NAME}/weights/best.pt"
   check_file "${best}" "Stage B best checkpoint"
@@ -115,7 +108,7 @@ run_infer_optional() {
     check_file "${bestA}" "Stage A best checkpoint"
     check_file "${bestB}" "Stage B best checkpoint"
 
-    python "${BB_DIR}/infer_two_stage_to_boxes.py" \
+    python "${BB_DIR}/train/infer_two_stage_to_boxes.py" \
       --stageA "${bestA}" \
       --stageB "${bestB}" \
       --images "${test_images}" \
