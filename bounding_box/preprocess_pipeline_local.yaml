@@ -21,7 +21,7 @@ all: true
 steps: null  # Use when 'all' is false, e.g., ["masks","split","augment","roi","viz"]
 
 # ---- Small subset mode (E2E sanity check) ----
-subset_n: 200
+subset_n: 50
 subset_seed: 43
 subset_copy: false
 
@@ -46,41 +46,9 @@ copy: false
 patient_regex: ""   # If you need special patient grouping, set a capturing regex here
 split_extra: ""
 
-# ---- augment_yolo_ds.py ----
-multiplier: 2
-out_ext: ".jpg"
-augment_splits: ["train","val","test"]
-include_images_without_labels: true
-
-# Tiling (grid sweep)
-enable_tiling: true
-tile_size: 512
-tile_overlap: 0.40
-min_tile_vis: 0.05
-keep_empty_tiles: true
-tile_from_aug: false
-
-# Zoom crops (object-centric)
-enable_zoom_crops: true
-zoom_scales: [0.35, 0.5, 0.7]
-zoom_per_obj: 2
-zoom_on: "both"
-zoom_out_size: 640
-zoom_jitter: 0.05
-zoom_min_vis: 0.10
-zoom_from_aug: false
-zoom_keep_empty: true
-
-# Multi-scale sliding zoom sweep (covers whole image)
-enable_zoom_sweep: true
-zoom_sweep_scales: [0.35, 0.5, 0.7]
-zoom_sweep_overlap: 0.25
-zoom_sweep_min_vis: 0.10
-zoom_sweep_keep_empty: true
-zoom_sweep_out_size: 640
-zoom_sweep_from_aug: false
-
-augment_extra: ""
+# ---- augment_yolo_ds.py (external config) ----
+aug_yaml: "/Users/carlosperez/PycharmProjects/MedSAM/bounding_box/preprocess/augment_config.yaml"
+augment_splits: ["train","val","test"]   # which splits to augment; keep this here if you like
 
 # ---- build_cup_roi_dataset.py ----
 roi_pad_pct: 0.10
@@ -101,15 +69,14 @@ datasets:
     images_root: "/Users/carlosperez/OneDrive_UBC/Ipek_Carlos/GlaucomaDatasets/SMDG-19/full-fundus/full-fundus"
     disc_masks:  "/Users/carlosperez/OneDrive_UBC/Ipek_Carlos/GlaucomaDatasets/SMDG-19/optic-disc/optic-disc"
     cup_masks:   "/Users/carlosperez/OneDrive_UBC/Ipek_Carlos/GlaucomaDatasets/SMDG-19/optic-cup/optic-cup"
-    recursive: false     # set true if images/masks are nested
-    exclude_name_contains: [ "PAPILA" ]
-
+    recursive: false
+    exclude_name_contains: ["PAPILA"]
 
   - tag: rimone
     images_root: "/Users/carlosperez/OneDrive_UBC/Ipek_Carlos/GlaucomaDatasets/Rim-One/Organized_Rim-One/fundus"
     disc_masks:  "/Users/carlosperez/OneDrive_UBC/Ipek_Carlos/GlaucomaDatasets/Rim-One/Organized_Rim-One/optic-disc"
     cup_masks:   "/Users/carlosperez/OneDrive_UBC/Ipek_Carlos/GlaucomaDatasets/Rim-One/Organized_Rim-One/optic-cup"
-    recursive: true      # Rim-One often has nested folders; true is safest
+    recursive: true
 
 # Where the unionized dataset (images+labels) will be assembled before splitting:
 union_images_root: "/Users/carlosperez/PycharmProjects/MedSAM/bounding_box/data/_union/images"
