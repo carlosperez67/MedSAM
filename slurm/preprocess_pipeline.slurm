@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=preprocess_smdg
+#SBATCH --job-name=preprocess_mutli_ds
 #SBATCH --account=st-ipor-1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
