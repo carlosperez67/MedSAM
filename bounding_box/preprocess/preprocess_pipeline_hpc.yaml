@@ -52,9 +52,9 @@ aug_yaml: "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/preprocess/augment_conf
 augment_splits: ["train"]
 
 # ---- build_cup_roi_dataset.py ----
-roi_pad_pct: 0.01
+roi_pad_pct: 0.0
 keep_roi_negatives: false
-roi_from_aug: true
+roi_from_aug: false
 roi_extra: ""
 
 # ---- viz_yolo_two_boxes.py ----

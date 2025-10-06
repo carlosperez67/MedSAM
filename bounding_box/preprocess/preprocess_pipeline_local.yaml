@@ -51,8 +51,9 @@ aug_yaml: "/Users/carlosperez/PycharmProjects/MedSAM/bounding_box/preprocess/aug
 augment_splits: ["train"]   # which splits to augment; keep this here if you like
 
 # ---- build_cup_roi_dataset.py ----
-roi_pad_pct: 0.10
+roi_pad_pct: 0.0
 keep_roi_negatives: false
+roi_from_aug: false
 roi_extra: ""
 
 # ---- viz_yolo_two_boxes.py ----
