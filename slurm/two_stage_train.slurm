@@ -15,9 +15,12 @@
 
 set -euo pipefail
 
+
+
 # --------------------------- Paths (HPC) ---------------------------
 PROJECT_DIR="/scratch/st-ipor-1/cperez/MedSAM"
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
+
 
 BB_DIR="${PROJECT_DIR}/bounding_box"
 RUNS_DIR="${BB_DIR}/runs/detect"
@@ -33,6 +36,13 @@ OUT_JSONL="${BB_DIR}/data/two_stage_boxes.jsonl"
 # Experiment names (match script defaults)
 STAGEA_NAME="stageA_disc_only"
 STAGEB_NAME="stageB_cup_roi"
+
+
+# Optional: avoid cache warnings on compute nodes
+export XDG_CACHE_HOME="/scratch/st-ipor-1/cperez/.cache"
+export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
+export TMPDIR="${PROJECT_DIR}/tmp"
+mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR" "$TMPDIR"
 
 mkdir -p "${PROJECT_DIR}/logs" "${RUNS_DIR}" "${BB_DIR}/data"
 cd "${PROJECT_DIR}"
@@ -60,11 +70,7 @@ export XDG_CACHE_HOME="${PROJECT_DIR}/.cache"
 export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
 mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR"
 
-# Optional: avoid cache warnings on compute nodes
-export XDG_CACHE_HOME="/scratch/st-ipor-1/cperez/.cache"
-export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
-export TMPDIR="${SCRATCH_DIR}/tmp"
-mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR" "$TMPDIR"
+
 
 # --------------------------- Helpers -------------------------------
 die() { echo "[ERROR] $*" >&2; exit 1; }
