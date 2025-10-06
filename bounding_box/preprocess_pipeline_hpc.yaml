@@ -73,9 +73,9 @@ datasets:
     exclude_name_contains: ["papila"]
 
   - tag: rimone
-    images_root: "/arc/project/st-ipor-1/carlosp/fundus_data/Rime-One/Organized_Rim-One/fundus"
-    disc_masks:  "/arc/project/st-ipor-1/carlosp/fundus_data/Rime-One/Organized_Rim-One/optic-disc"
-    cup_masks:   "/arc/project/st-ipor-1/carlosp/fundus_data/Rime-One/Organized_Rim-One/optic-cup"
+    images_root: "/arc/project/st-ipor-1/carlosp/fundus_data/Rim-One/Organized_Rim-One/fundus"
+    disc_masks:  "/arc/project/st-ipor-1/carlosp/fundus_data/Rim-One/Organized_Rim-One/optic-disc"
+    cup_masks:   "/arc/project/st-ipor-1/carlosp/fundus_data/Rim-One/Organized_Rim-One/optic-cup"
     recursive: true   # often nested; safest to enable
 
 # Unionized images + labels (assembled on scratch, then used by split/augment/roi/viz)
