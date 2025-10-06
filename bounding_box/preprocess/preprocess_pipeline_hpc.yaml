@@ -70,7 +70,7 @@ datasets:
     disc_masks:  "/arc/project/st-ipor-1/carlosp/fundus_data/SMDG-19/optic-disc/optic-disc"
     cup_masks:   "/arc/project/st-ipor-1/carlosp/fundus_data/SMDG-19/optic-cup/optic-cup"
     recursive: false
-    exclude_name_contains: ["papila"]
+    exclude_name_contains: ["PAPILA"]
 
   - tag: rimone
     images_root: "/arc/project/st-ipor-1/carlosp/fundus_data/Rim-One/Organized_Rim-One/fundus"

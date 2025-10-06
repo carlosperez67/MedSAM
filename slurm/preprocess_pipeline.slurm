@@ -9,7 +9,7 @@
 #SBATCH --output=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.out
 #SBATCH --error=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.err
 #SBATCH --mail-user=cperez67@student.ubc.ca
-#SBATCH --mail-type=END,FAIL
+# SBATCH --mail-type=END,FAIL
 
 set -euo pipefail
 
