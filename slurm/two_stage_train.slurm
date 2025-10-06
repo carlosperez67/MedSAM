@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=bb-two-stage
+#SBATCH --job-name=two-stage-train
 #SBATCH --account=st-ipor-1-gpu
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
@@ -59,6 +59,12 @@ export PYTHONUNBUFFERED=1
 export XDG_CACHE_HOME="${PROJECT_DIR}/.cache"
 export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
 mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR"
+
+# Optional: avoid cache warnings on compute nodes
+export XDG_CACHE_HOME="/scratch/st-ipor-1/cperez/.cache"
+export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
+export TMPDIR="${SCRATCH_DIR}/tmp"
+mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR" "$TMPDIR"
 
 # --------------------------- Helpers -------------------------------
 die() { echo "[ERROR] $*" >&2; exit 1; }

@@ -55,20 +55,28 @@ from device_utils import ultralytics_device_arg  # device string ("0" or "cpu")
 # ----------------------------- Dataclass -----------------------------
 
 # ----------------------------- Dataclass -----------------------------
+
 @dataclass
 class DiscOnlyConfig:
+    # Core paths
     project_dir: Path
-    data_root: Path            # base (non-aug) YOLO root
+    data_root: Path             # Base (non-augmented) YOLO dataset root
     model_path: Path
     runs_root: Path
-    # NEW:
-    aug_root: Path | None      # augmented YOLO root (optional)
-    train_splits: List[str]    # which splits should come from aug_root
-    # data curation
-    copy_images: bool
-    drop_empty: bool
-    # training
+
+    # Augmentation support
+    aug_root: Optional[Path]    # Optional augmented YOLO dataset (for training splits only)
+    train_splits: List[str]     # Which splits to source from aug_root (e.g., ["train"])
+
+    # Data handling
+    copy_images: bool           # Copy vs symlink
+    drop_empty: bool            # Drop images with empty filtered labels
+
     epochs: int
+    imgsz: int
+    batch: int
+    exp_name: str               # Experiment name (Ultralytics subfolder)
+    do_train: bool              # Whether to train or just validate
 
 
 # ----------------------------- Small utils --------------------------
