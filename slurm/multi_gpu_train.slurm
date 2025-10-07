@@ -3,14 +3,11 @@
 #SBATCH --account=st-ipor-1-gpu
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
-# Default layout below works for BOTH modes:
-# - Parallel A&B: 2 tasks, 1 GPU per task (two trainings at once)
-# - DDP: we will still request 2 GPUs and use both for one stage (set DDP_STAGE and NUM_DDP_GPUS=2)
-#SBATCH --ntasks=2
-#SBATCH --gpus-per-task=1
-#SBATCH --cpus-per-task=12
-#SBATCH --mem=32G
-#SBATCH --time=8:00:00
+#SBATCH --ntasks=1                  # we'll launch our own srun steps
+#SBATCH --cpus-per-task=24
+#SBATCH --mem=48G
+#SBATCH --time=08:00:00
+#SBATCH --gpus=4                    # MUST be >= (A_GPUS + B_GPUS) in parallel mode
 #SBATCH --output=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.out
 #SBATCH --error=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.err
 #SBATCH --mail-user=cperez67@student.ubc.ca
@@ -18,46 +15,45 @@
 
 set -euo pipefail
 
-# ========================= Mode switches =========================
-# Choose ONE of the following:
-# 1) Run Stage A and Stage B in PARALLEL (1 GPU each). (Default)
-PARALLEL_AB=${PARALLEL_AB:-1}
+# ======================= CONFIG (edit these) =======================
+# TRAIN_MODE: "parallel" (A & B at once), "A-only", "B-only"
+TRAIN_MODE="parallel"
 
-# 2) Run ONE stage with DDP (multi-GPU) using NUM_DDP_GPUS GPUs.
-#    Set DDP_STAGE to "A" or "B". When using DDP, PARALLEL_AB must be 0.
-DDP_STAGE=${DDP_STAGE:-""}         # "", "A", or "B"
-NUM_DDP_GPUS=${NUM_DDP_GPUS:-2}    # how many GPUs to use for the chosen stage
+# Per-stage GPU counts for parallel mode:
+A_GPUS=2            # Stage A (disc-only) GPUs
+B_GPUS=2            # Stage B (cup-ROI) GPUs
 
-# (Tip) If you want more speed for DDP, submit with more GPUs:
-#   sbatch --export=ALL,PARALLEL_AB=0,DDP_STAGE=B,NUM_DDP_GPUS=2  this_script.sh
-# For parallel mode:
-#   sbatch --export=ALL,PARALLEL_AB=1 this_script.sh
+# (Optional) Per-stage CPU shares (dataloader/threads). They should sum <= #SBATCH --cpus-per-task.
+A_CPUS=12
+B_CPUS=12
 
-# ========================= Paths (HPC) =========================
+# Project / env paths
 PROJECT_DIR="/scratch/st-ipor-1/cperez/MedSAM"
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
 
+# Datasets
 BB_DIR="${PROJECT_DIR}/bounding_box"
 RUNS_DIR="${BB_DIR}/runs/detect"
+DATA_ROOT="${BB_DIR}/data/yolo_split"           # clean (val/test)
+AUG_ROOT="${BB_DIR}/data/yolo_split_aug"        # augmented (train if needed)
+ROI_OUT="${BB_DIR}/data/yolo_split_cupROI"      # prebuilt ROI (Stage B)
+DISC_ROOT="${BB_DIR}/data/yolo_split_disc_only" # prebuilt disc-only (Stage A)
 
-# Datasets
-DATA_ROOT="${BB_DIR}/data/yolo_split"          # clean split (val/test)
-AUG_ROOT="${BB_DIR}/data/yolo_split_aug"       # augmented split (train for A when building)
-ROI_OUT="${BB_DIR}/data/yolo_split_cupROI"     # prebuilt ROI for Stage B
-DISC_ROOT="${BB_DIR}/data/yolo_split_disc_only" # prebuilt disc-only dataset (preferred for Stage A)
+# Weights / names
+YOLO_WEIGHTS="${BB_DIR}/weights/yolov8n.pt"
+STAGEA_NAME="stageA_disc_only"
+STAGEB_NAME="stageB_cup_roi"
 
 # Optional two-stage inference output
 OUT_JSONL="${BB_DIR}/data/two_stage_boxes.jsonl"
-
-# Experiment names (match your trainers’ defaults unless you override --name)
-STAGEA_NAME="stageA_disc_only"
-STAGEB_NAME="stageB_cup_roi"
+# ==================================================================
 
 # ========================= Caches / temp =========================
 export XDG_CACHE_HOME="/scratch/st-ipor-1/cperez/.cache"
 export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
 export TMPDIR="${PROJECT_DIR}/tmp"
-mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR" "$TMPDIR"
+export YOLO_CONFIG_DIR="${PROJECT_DIR}/.ultralytics"   # avoid user-home warning
+mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR" "$TMPDIR" "$YOLO_CONFIG_DIR"
 mkdir -p "${PROJECT_DIR}/logs" "${RUNS_DIR}" "${BB_DIR}/data"
 
 cd "${PROJECT_DIR}"
@@ -78,7 +74,6 @@ print(f"[ENV] torch {torch.__version__} | cuda={torch.cuda.is_available()} | gpu
 print(f"[ENV] ultralytics {ultralytics.__version__}")
 PY
 
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export PYTHONUNBUFFERED=1
 
 # ========================= Helpers =========================
@@ -86,10 +81,31 @@ die() { echo "[ERROR] $*" >&2; exit 1; }
 check_file() { [[ -f "$1" ]] || die "$2 not found: $1"; }
 check_dir()  { [[ -d "$1" ]] || die "$2 not found: $1"; }
 
+# Count GPUs available to the job
+alloc_gpu_count() {
+  if [[ -n "${SLURM_GPUS:-}" ]]; then echo "${SLURM_GPUS}"; return; fi
+  if [[ -n "${SLURM_GPUS_ON_NODE:-}" ]]; then echo "${SLURM_GPUS_ON_NODE}"; return; fi
+  if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    IFS=',' read -r -a arr <<< "${CUDA_VISIBLE_DEVICES}"; echo "${#arr[@]}"; return
+  fi
+  nvidia-smi -L 2>/dev/null | wc -l | tr -d ' '
+}
+
+ensure_parallel_capacity() {
+  local need=$((A_GPUS + B_GPUS))
+  local have; have="$(alloc_gpu_count)"
+  if (( need <= 0 )); then die "A_GPUS + B_GPUS must be >= 1"; fi
+  if (( have < need )); then
+    die "Parallel mode needs ${need} GPUs but only ${have} are allocated. Increase #SBATCH --gpus."
+  fi
+  if (( A_CPUS + B_CPUS > SLURM_CPUS_PER_TASK )); then
+    echo "[WARN] A_CPUS+B_CPUS > --cpus-per-task; steps will compete for CPU." >&2
+  fi
+}
+
+# Create a "0,1,2,...,N-1" list for YOLO_DEVICES inside each task (relative to that task's visibility)
 make_devices_csv() {
-  # Build "0,1,...,N-1" for given N (default: NUM_DDP_GPUS)
-  local n="${1:-$NUM_DDP_GPUS}"
-  if [[ "$n" -le 1 ]]; then echo "0"; return; fi
+  local n="${1}"
   local out="0"
   for ((i=1;i<n;i++)); do out+=",${i}"; done
   echo "$out"
@@ -98,15 +114,14 @@ make_devices_csv() {
 # ========================= Stage A =========================
 run_stageA() {
   echo "[STAGE A] Train disc-only detector…"
-
   if [[ -d "${DISC_ROOT}" && -f "${DISC_ROOT}/od_only.yaml" ]]; then
     echo "[STAGE A] Using PREBUILT disc-only dataset at ${DISC_ROOT}"
     python "${BB_DIR}/train/train_stageA_disc_only.py" \
       --project_dir "${PROJECT_DIR}" \
       --data_root   "${DISC_ROOT}" \
-      --model       "${BB_DIR}/weights/yolov8n.pt"
+      --model       "${YOLO_WEIGHTS}"
   else
-    echo "[STAGE A] Prebuilt disc-only dataset NOT found, falling back to clean+aug roots."
+    echo "[STAGE A] Prebuilt disc-only dataset NOT found; building from clean+aug."
     check_dir "${DATA_ROOT}" "Clean YOLO split"
     check_dir "${AUG_ROOT}"  "Augmented YOLO split"
     python "${BB_DIR}/train/train_stageA_disc_only.py" \
@@ -114,7 +129,7 @@ run_stageA() {
       --data_root   "${DATA_ROOT}" \
       --aug_root    "${AUG_ROOT}" \
       --train_splits train \
-      --model       "${BB_DIR}/weights/yolov8n.pt"
+      --model       "${YOLO_WEIGHTS}"
   fi
 
   local best="${RUNS_DIR}/${STAGEA_NAME}/weights/best.pt"
@@ -135,33 +150,55 @@ run_stageB() {
   echo "[STAGE B] Best checkpoint: ${best}"
 }
 
-export -f run_stageA run_stageB die check_file check_dir make_devices_csv
+# Export functions for srun steps
+export -f run_stageA run_stageB die check_file check_dir
 
 # ========================= Dispatcher =========================
-if [[ "${PARALLEL_AB}" == "1" && -z "${DDP_STAGE}" ]]; then
-  echo "[MODE] PARALLEL: launching Stage A and Stage B concurrently (1 GPU each)"
-  # two tasks, each gets its own GPU via SLURM binding
-  srun --ntasks=1 --gpus-per-task=1 bash -lc 'run_stageA' &
-  srun --ntasks=1 --gpus-per-task=1 bash -lc 'run_stageB' &
-  wait
-elif [[ -n "${DDP_STAGE}" && "${PARALLEL_AB}" == "0" ]]; then
-  # Multi-GPU mode for ONE stage (NUM_DDP_GPUS GPUs)
-  DEVICES="$(make_devices_csv "${NUM_DDP_GPUS}")"
-  export YOLO_DEVICES="${DEVICES}"
-  echo "[MODE] DDP: training Stage ${DDP_STAGE} on devices: ${YOLO_DEVICES}"
+case "${TRAIN_MODE}" in
+  parallel)
+    echo "[MODE] PARALLEL: Stage A and Stage B concurrently, each using multiple GPUs"
+    ensure_parallel_capacity
 
-  if [[ "${DDP_STAGE}" == "A" ]]; then
-    run_stageA
-  elif [[ "${DDP_STAGE}" == "B" ]]; then
-    run_stageB
-  else
-    die "DDP_STAGE must be 'A' or 'B' (got '${DDP_STAGE}')"
-  fi
-else
-  echo "[MODE] SEQUENTIAL: running Stage B only (default path here)"
-  # change below if you prefer Stage A only when no mode is set
-  run_stageB
-fi
+    # Build relative device lists per step, e.g., "0,1" for 2 GPUs.
+    A_DEV="$(make_devices_csv "${A_GPUS}")"
+    B_DEV="$(make_devices_csv "${B_GPUS}")"
+
+    # Launch A & B as separate srun steps. SLURM cgroups will isolate GPUs so each step
+    # only sees its assigned devices. Inside each step, Ultralytics/torch will see
+    # CUDA_VISIBLE_DEVICES as those GPUs; we set YOLO_DEVICES="0,1,..." for DDP.
+    srun --exclusive -N1 -n1 \
+         --gpus-per-task="${A_GPUS}" \
+         --cpus-per-task="${A_CPUS}" \
+         --export=ALL,YOLO_DEVICES="${A_DEV}",OMP_NUM_THREADS="${A_CPUS}" \
+         bash -lc 'run_stageA' &
+
+    srun --exclusive -N1 -n1 \
+         --gpus-per-task="${B_GPUS}" \
+         --cpus-per-task="${B_CPUS}" \
+         --export=ALL,YOLO_DEVICES="${B_DEV}",OMP_NUM_THREADS="${B_CPUS}" \
+         bash -lc 'run_stageB' &
+
+    wait
+    ;;
+
+  A-only)
+    echo "[MODE] Stage A only"
+    export YOLO_DEVICES="$(make_devices_csv "${A_GPUS}")"
+    export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
+    srun --exclusive -N1 -n1 --gpus-per-task="${A_GPUS}" bash -lc 'run_stageA'
+    ;;
+
+  B-only)
+    echo "[MODE] Stage B only"
+    export YOLO_DEVICES="$(make_devices_csv "${B_GPUS}")"
+    export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
+    srun --exclusive -N1 -n1 --gpus-per-task="${B_GPUS}" bash -lc 'run_stageB'
+    ;;
+
+  *)
+    die "Unknown TRAIN_MODE='${TRAIN_MODE}'. Use: parallel | A-only | B-only"
+    ;;
+esac
 
 # ========================= (Optional) Inference =========================
 run_infer_optional() {
@@ -187,7 +224,7 @@ run_infer_optional() {
   fi
 }
 
-# Uncomment if you want an automatic inference after training
+# Uncomment to run inference automatically
 # run_infer_optional
 
 echo "[DONE] Training finished at $(date)"
