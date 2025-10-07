@@ -1,10 +1,21 @@
 # device_utils.py
-import torch
+
+# device_utils.py
+import os
+from torch.cuda import is_available, device_count
+
 
 def ultralytics_device_arg() -> str:
     """
-    Returns a string Ultralytics accepts for its 'device' argument.
-    - CUDA available -> '0' (first GPU)
-    - otherwise      -> 'cpu'
+    Returns a device argument for Ultralytics .train():
+      - If YOLO_DEVICES is set (e.g. "0,1" or "0,1,2,3"), return it (enables DDP).
+      - Else if CUDA is visible, return "0".
+      - Else return "cpu".
     """
-    return "0" if torch.cuda.is_available() else "cpu"
+    env = os.getenv("YOLO_DEVICES")
+    if env:
+        return env  # Ultralytics treats "0,1" as multi-GPU (DDP)
+    # simple fallback
+    if is_available() and device_count() > 0:
+        return "0"
+    return "cpu"

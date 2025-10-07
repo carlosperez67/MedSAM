@@ -142,7 +142,7 @@ def build_config_from_cli() -> CupROITrainConfig:
     # Default locations relative to project_dir
     default_data = project_dir / "bounding_box" / "data" / "yolo_split_cupROI"
     default_runs = project_dir / "bounding_box" / "runs" / "detect"
-    default_wts  = project_dir / "weights" / "yolov8n.pt"
+    default_wts  = project_dir / "bounding_box" / "weights" / "yolov8n.pt"
 
     data_root = _expand(args.data_root) if args.data_root else default_data
     runs_root = _expand(args.project) if args.project else default_runs
