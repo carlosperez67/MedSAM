@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=two-stage-train
+#SBATCH --job-name=two-stage-train-B-only
 #SBATCH --account=st-ipor-1-gpu
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
@@ -136,8 +136,8 @@ run_infer_optional() {
 }
 
 # --------------------------- Run -----------------------------------
-run_stageA
-# run_stageB
+# run_stageA
+run_stageB
 # run_infer_optional
 
 echo "[DONE] Two-stage training completed at $(date)"
