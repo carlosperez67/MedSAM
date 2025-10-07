@@ -29,6 +29,8 @@ RUNS_DIR="${BB_DIR}/runs/detect"
 DATA_ROOT="${BB_DIR}/data/yolo_split"       # clean (val/test)
 AUG_ROOT="${BB_DIR}/data/yolo_split_aug"    # augmented (train)
 ROI_OUT="${BB_DIR}/data/yolo_split_cupROI"  # prebuilt (used by Stage B)
+# Prebuilt disc-only dataset (built by preprocess 'disc_only' stage)
+DISC_ROOT="${BB_DIR}/data/yolo_split_disc_only"
 
 # Optional output for two-stage inference
 OUT_JSONL="${BB_DIR}/data/two_stage_boxes.jsonl"
@@ -79,17 +81,15 @@ check_dir()  { [[ -d "$1" ]] || die "$2 not found: $1"; }
 
 # --------------------------- Stage A -------------------------------
 run_stageA() {
-  echo "[STAGE A] Train disc-only detector (augmented train, clean val/test)…"
-  check_dir "${DATA_ROOT}" "Clean YOLO split"
-  check_dir "${AUG_ROOT}"  "Augmented YOLO split"
+  echo "[STAGE A] Train disc-only detector using PREBUILT disc-only dataset…"
+  check_dir  "${DISC_ROOT}" "Prebuilt disc-only root"
+  check_file "${DISC_ROOT}/od_only.yaml" "Disc-only YAML (od_only.yaml)"
 
-  # Minimal CLI: pass only non-defaults (project root + mixed data roots).
+  # Minimal CLI: just point --data_root at the disc-only root; no --aug_root needed.
   python "${BB_DIR}/train/train_stageA_disc_only.py" \
     --project_dir "${PROJECT_DIR}" \
-    --data_root   "${DATA_ROOT}" \
-    --aug_root    "${AUG_ROOT}" \
-    --train_splits train \
-    --model "${BB_DIR}/weights/yolov8n.pt"
+    --data_root   "${DISC_ROOT}" \
+    --model       "${BB_DIR}/weights/yolov8n.pt"
 
   local best="${RUNS_DIR}/${STAGEA_NAME}/weights/best.pt"
   check_file "${best}" "Stage A best checkpoint"
