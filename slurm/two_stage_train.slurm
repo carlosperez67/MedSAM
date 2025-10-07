@@ -88,7 +88,8 @@ run_stageA() {
     --project_dir "${PROJECT_DIR}" \
     --data_root   "${DATA_ROOT}" \
     --aug_root    "${AUG_ROOT}" \
-    --train_splits train
+    --train_splits train \
+    --model "${BB_DIR}/weights/yolov8n.pt"
 
   local best="${RUNS_DIR}/${STAGEA_NAME}/weights/best.pt"
   check_file "${best}" "Stage A best checkpoint"
@@ -136,7 +137,7 @@ run_infer_optional() {
 
 # --------------------------- Run -----------------------------------
 run_stageA
-run_stageB
-run_infer_optional
+# run_stageB
+# run_infer_optional
 
 echo "[DONE] Two-stage training completed at $(date)"

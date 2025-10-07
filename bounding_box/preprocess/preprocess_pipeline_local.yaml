@@ -82,3 +82,9 @@ datasets:
 # Where the unionized dataset (images+labels) will be assembled before splitting:
 union_images_root: "/Users/carlosperez/PycharmProjects/MedSAM/bounding_box/data/_union/images"
 union_labels_dir:  "/Users/carlosperez/PycharmProjects/MedSAM/bounding_box/data/_union/labels"
+
+yolo_disc_only: "/Users/carlosperez/PycharmProjects/MedSAM/bounding_box/data/yolo_split_disc_only"
+disc_only_from_aug_train: false         # use augmented train split for disc-only
+disc_only_train_splits: ["train"]      # which splits pull from aug_root
+disc_only_copy_images: false           # false = symlink (fast on HPC)
+disc_only_drop_empty: false            # drop images whose labels become empty after filtering

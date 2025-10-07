@@ -1,32 +1,5 @@
 #!/usr/bin/env python3
 # preprocess_pipeline.py
-"""
-One-command wrapper to run your full preprocessing pipeline, stage by stage.
-
-What's new
-----------
-- --config: load all arguments from a YAML file (with comments). CLI flags still override.
-- --write_config_template: write a commented YAML config you can edit and re-use.
-- --subset_n: run the pipeline on a small subset to test end-to-end quickly.
-- Multi-dataset support via YAML `datasets:`. Builds a union for split stage.
-- Name-based include/exclude filters passed to masks_to_boxes.py.
-- Augment stage now takes a YAML via --aug_yaml, or auto-builds one from pipeline params.
-
-Stages (enable any subset with --steps (list) or use --all):
-  1) masks   -> Generate YOLO labels from disc/cup segmentation masks
-  2) split   -> Patient-wise split into train/val/test (images/ + labels/)
-  3) augment -> Augment yolo_split (flips/affine/zoom/tiling) into yolo_split_aug
-  4) roi     -> Build cup-in-ROI dataset from yolo_split (cup-only)
-  5) viz     -> Visualize OD/OC labels over source fundus images
-
-Project-rooted defaults:
-  {PROJECT_DIR}/bounding_box/preprocess/*.py
-  {PROJECT_DIR}/bounding_box/data/labels
-  {PROJECT_DIR}/bounding_box/data/yolo_split
-  {PROJECT_DIR}/bounding_box/data/yolo_split_aug
-  {PROJECT_DIR}/bounding_box/data/yolo_split_cupROI
-  {PROJECT_DIR}/bounding_box/data/viz_labels
-"""
 
 from __future__ import annotations
 
@@ -38,10 +11,12 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple, Any, Union
+import re
 
 import yaml  # PyYAML
 
 IMG_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")
+
 
 # ------------------------- tiny utils -------------------------
 
@@ -50,6 +25,11 @@ def _expand(p: Union[str, Path]) -> Path:
 
 def _ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
+
+def _ensure_paths(paths: Iterable[Path]) -> None:
+    """Create a list of paths; if an entry looks like a file (has suffix), create its parent."""
+    for p in paths:
+        _ensure_dir(p.parent if isinstance(p, Path) and p.suffix else p)
 
 def require_dir(p: Path, desc: str) -> None:
     if not p.exists():
@@ -91,34 +71,32 @@ def stem_map_by_first_match(root: Path, exts: Iterable[str]) -> Dict[str, Path]:
 
 def _name_matches_filters(name: str, include: list | None, exclude: list | None) -> bool:
     n = name.lower()
-    if include:
-        if not any(str(s).lower() in n for s in include):
-            return False
-    if exclude:
-        if any(str(s).lower() in n for s in exclude):
-            return False
+    if include and not any(str(s).lower() in n for s in include):
+        return False
+    if exclude and any(str(s).lower() in n for s in exclude):
+        return False
     return True
 
 def _to_float_list(v: Union[str, List[Any], None]) -> List[float]:
     if v is None:
         return []
     if isinstance(v, list):
-        vals = []
+        vals: List[float] = []
         for x in v:
             try:
                 vals.append(float(x))
             except Exception:
                 pass
         return vals
-    # string
     parts = [p.strip() for p in str(v).split(",") if p.strip()]
-    vals = []
+    vals: List[float] = []
     for p in parts:
         try:
             vals.append(float(p))
         except Exception:
             pass
     return vals
+
 
 # ------------------------- defaults from project -------------------------
 
@@ -137,7 +115,9 @@ def resolve_defaults(project_dir: Path) -> dict:
     }
     return defaults
 
+
 # ------------------------- subset builders (single-dataset) -------------------------
+
 def build_subset_for_masks_stage_multi(
     subset_base: Path,
     datasets: List[dict],
@@ -150,8 +130,7 @@ def build_subset_for_masks_stage_multi(
     Build a tiny per-dataset filesystem with only N sampled items total.
     Returns (new_datasets_list_with_overridden_paths, sampled_entries).
 
-    Change: we now shuffle ALL candidates across all datasets using the seed,
-    then take the first N. This guarantees cross-dataset mixing.
+    We shuffle ALL candidates across all datasets using the seed, then take the first N.
     """
     rng = random.Random(seed)
 
@@ -176,7 +155,8 @@ def build_subset_for_masks_stage_multi(
         s_cup  = subset_base / "cup_masks"  / tag
         for d in (s_img, s_disc, s_cup):
             _ensure_dir(d)
-        new_datasets.append({**ds,
+        new_datasets.append({
+            **ds,
             "images_root": str(s_img),
             "disc_masks":  str(s_disc),
             "cup_masks":   str(s_cup),
@@ -189,6 +169,8 @@ def build_subset_for_masks_stage_multi(
         if cmp: safe_link(cmp, subset_base / "cup_masks"  / tag / cmp.name, copy=copy)
 
     return new_datasets, sampled
+
+
 def build_subset_for_split_stage(
     subset_base: Path,
     labels_dir: Path,
@@ -224,6 +206,7 @@ def build_subset_for_split_stage(
 
     # Patient id derivation (regex first, fallback: keep before last '-')
     rx = re.compile(patient_regex, re.I) if patient_regex else None
+
     def pid_from_stem(stem: str) -> str:
         if rx:
             m = rx.search(stem)
@@ -251,13 +234,11 @@ def build_subset_for_split_stage(
     selected_lbls: List[Path] = []
     for pid in pids:
         k = len(selected_lbls)
-        if n > 0 and k >= n:
+        if 0 < n <= k:
             break
-        # add all labels for this patient
         selected_lbls.extend(by_pid[pid])
 
-    # If an explicit N was requested, trim the excess (still whole patients first)
-    if n > 0 and len(selected_lbls) > n:
+    if 0 < n < len(selected_lbls):
         selected_lbls = selected_lbls[:n]
 
     # Link files
@@ -276,6 +257,7 @@ def build_subset_for_split_stage(
 
     print(f"[SUBSET] split-stage subset: {len(stems)} items across {len(pids)} patients (sampled) → {subset_base}")
     return s_labels, s_images, stems
+
 
 # ------------------------- subset builders (multi-dataset) -------------------------
 
@@ -313,50 +295,6 @@ def _collect_candidates_for_dataset(ds: dict, require_both_default: bool=False) 
         out.append((tag, stem, ip, dmp, cmp))
     return out
 
-def build_subset_for_masks_stage_multi(
-    subset_base: Path,
-    datasets: List[dict],
-    n: int,
-    seed: int,
-    copy: bool = False,
-    require_both_default: bool = False,
-) -> Tuple[List[dict], List[tuple]]:
-    """
-    Build a tiny per-dataset filesystem with only N sampled items total.
-    Returns (new_datasets_list_with_overridden_paths, sampled_entries).
-    """
-    random.seed(seed)
-    choices: List[tuple] = []
-    for ds in datasets:
-        choices.extend(_collect_candidates_for_dataset(ds, require_both_default=require_both_default))
-
-    if not choices:
-        raise SystemExit("[ERR] No candidate images with masks found across datasets.")
-
-    sampled = random.sample(choices, min(n, len(choices))) if n > 0 else choices
-
-    # Prepare per-dataset subset roots
-    new_datasets: List[dict] = []
-    for ds in datasets:
-        tag = ds["tag"]
-        s_img  = subset_base / "images"     / tag
-        s_disc = subset_base / "disc_masks" / tag
-        s_cup  = subset_base / "cup_masks"  / tag
-        for d in (s_img, s_disc, s_cup):
-            _ensure_dir(d)
-        new_datasets.append({**ds,
-            "images_root": str(s_img),
-            "disc_masks":  str(s_disc),
-            "cup_masks":   str(s_cup),
-        })
-
-    # Link/copy the sampled files
-    for tag, stem, ip, dmp, cmp in sampled:
-        safe_link(ip,  subset_base / "images"     / tag / ip.name,  copy=copy)
-        if dmp: safe_link(dmp, subset_base / "disc_masks" / tag / dmp.name, copy=copy)
-        if cmp: safe_link(cmp, subset_base / "cup_masks"  / tag / cmp.name, copy=copy)
-
-    return new_datasets, sampled
 
 # ------------------------- stage runners -------------------------
 
@@ -385,6 +323,7 @@ def stage_masks_to_boxes(args, defaults) -> None:
         cmd += ["--include_name_contains", args.masks_include_name_contains]
     run_cmd(cmd, args.dry_run)
 
+
 def stage_masks_to_boxes_one_dataset(
     script_path: Path,
     out_labels_root: Path,
@@ -392,12 +331,10 @@ def stage_masks_to_boxes_one_dataset(
     verbose: bool,
     dry_run: bool,
 ):
+    """Call masks_to_boxes.py for a single dataset block into a per-dataset labels folder."""
     def _csv(v):
         return v if isinstance(v, str) else ",".join(map(str, v))
-    """
-    Call masks_to_boxes.py for a single dataset block into a per-dataset labels folder.
-    Keeps stems identical to image stems (no renaming here).
-    """
+
     tag = ds["tag"]
     out_labels = out_labels_root / tag
     out_csv    = out_labels_root / f"labels_summary_{tag}.csv"
@@ -421,6 +358,24 @@ def stage_masks_to_boxes_one_dataset(
     if ds.get("include_name_contains"):
         args += ["--include_name_contains", _csv(ds["include_name_contains"])]
     run_cmd(args, dry_run=dry_run)
+
+
+def _safe_link_or_copy(src: Path, dst: Path, do_copy: bool = False):
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        dst.unlink()
+    try:
+        if do_copy:
+            import shutil; shutil.copy2(src, dst)
+        else:
+            dst.symlink_to(src.resolve())
+    except Exception:
+        import shutil; shutil.copy2(src, dst)
+
+
+def _log(msg: str):
+    print(f"[MDSET] {msg}")
+
 
 def build_union_images_and_labels(
     datasets: List[dict],
@@ -464,13 +419,13 @@ def build_union_images_and_labels(
                 collisions += 1
             stem_seen.add(final_stem)
 
-            # link/copy image and label into union
-            # keep original image extension
+            # link/copy image and label into union (keep original image extension)
             _safe_link_or_copy(ip, union_images_root / f"{final_stem}{ip.suffix}", do_copy=prefer_copy)
             _safe_link_or_copy(lp, union_labels_dir / f"{final_stem}.txt", do_copy=prefer_copy)
             added += 1
 
     _log(f"union built: {added} pairs | collisions (prefixed) = {collisions}")
+
 
 def stage_masks_multi(args, defaults, cfg_dict: dict):
     """Run masks_to_boxes for each dataset in cfg['datasets'] and build union I/O for split."""
@@ -506,6 +461,7 @@ def stage_masks_multi(args, defaults, cfg_dict: dict):
     # Redirect subsequent stages to use the union
     args.images_root = union_images_root
     args.labels_dir  = union_labels_dir
+
 
 # ------------------------- augment YAML auto-builder -------------------------
 
@@ -587,7 +543,34 @@ def _write_auto_aug_yaml(args, out_root: Path) -> Path:
     print(f"[INFO] Auto-generated augment config → {aug_yaml}")
     return aug_yaml
 
-# ------------------------- stage: split / augment / roi / viz -------------------------
+
+# ------------------------- stage: split / augment / roi / viz / disc_only -------------------------
+
+def stage_disc_only(args, defaults) -> None:
+    """Build disc-only dataset from 2-class YOLO labels.
+       Train splits can be taken from yolo_split_aug; val/test from clean yolo_split."""
+    script = defaults["script_dir"] / "build_disc_only_dataset.py"
+    require_dir(script.parent, "preprocess script dir")
+    base_root = args.yolo_split               # clean split must exist
+    aug_root  = args.yolo_aug if args.disc_only_from_aug_train else None
+
+    # normalize train_splits
+    splits = args.disc_only_train_splits
+    if isinstance(splits, str):
+        splits = [s.strip() for s in splits.split(",") if s.strip()]
+
+    cmd = [
+        sys.executable, str(script),
+        "--base_root",  str(base_root),
+        "--out_root",   str(args.yolo_disc_only),
+        "--train_splits", ",".join(splits),
+    ]
+    if aug_root: cmd += ["--aug_root", str(aug_root)]
+    if args.disc_only_copy_images: cmd += ["--copy_images"]
+    if args.disc_only_drop_empty:  cmd += ["--drop_empty"]
+
+    run_cmd(cmd, args.dry_run)
+
 
 def stage_split_yolo(args, defaults) -> None:
     script = defaults["script_dir"] / "split_yolo.py"
@@ -608,12 +591,11 @@ def stage_split_yolo(args, defaults) -> None:
     if args.split_extra: cmd += shlex.split(args.split_extra)
     run_cmd(cmd, args.dry_run)
 
+
 def stage_augment(args, defaults) -> None:
     """
-    New behavior:
-      - If args.aug_yaml is provided (or set in config), pass it through to augment_yolo_ds.py.
-      - Otherwise, synthesize an augment YAML from pipeline args and pass that.
-      - We no longer pass per-augmentation CLI flags; they belong in the augment YAML.
+    - If args.aug_yaml is provided, pass it through to augment_yolo_ds.py.
+    - Otherwise, synthesize an augment YAML from pipeline args and pass that.
     """
     script = defaults["script_dir"] / "augment_yolo_ds.py"
     require_dir(script.parent, "preprocess script dir")
@@ -635,13 +617,14 @@ def stage_augment(args, defaults) -> None:
         "--aug_yaml",    str(aug_yaml_path),
     ]
 
-    # splits (still a CLI concern)
+    # splits
     if args.augment_splits:
         splits = args.augment_splits if isinstance(args.augment_splits, list) else normalize_list(args.augment_splits)
         if splits:
             cmd += ["--splits"] + splits
 
     run_cmd(cmd, args.dry_run)
+
 
 def stage_build_roi(args, defaults) -> None:
     script = defaults["script_dir"] / "build_cup_roi_dataset.py"
@@ -664,6 +647,7 @@ def stage_build_roi(args, defaults) -> None:
         cmd += shlex.split(args.roi_extra)
     run_cmd(cmd, args.dry_run)
 
+
 def stage_viz(args, defaults) -> None:
     script = defaults["script_dir"] / "viz_yolo_two_boxes.py"
     require_dir(script.parent, "preprocess script dir")
@@ -684,6 +668,7 @@ def stage_viz(args, defaults) -> None:
     if args.viz_extra:
         cmd += shlex.split(args.viz_extra)
     run_cmd(cmd, args.dry_run)
+
 
 # ------------------------- config helpers -------------------------
 
@@ -729,8 +714,8 @@ yolo_roi:    "{d['yolo_roi']}"           # Cup-ROI dataset output
 viz_out:     "{d['viz_out']}"            # Visualizations output folder
 
 # ---- Which stages to run ----
-all: false                     # If true, runs: [masks, split, augment, roi, viz]
-steps: ["masks", "split", "augment", "roi", "viz"]  # Use this when 'all' is false
+all: false                     # If true, runs: [masks, split, augment, disc_only, roi, viz]
+steps: ["masks", "split", "augment", "disc_only", "roi", "viz"]
 
 # ---- Small subset mode (E2E sanity check) ----
 subset_n: 0                    # If >0, run on a random subset of N items
@@ -803,6 +788,14 @@ augment_extra: ""              # (deprecated) no longer used
 roi_pad_pct: 0.10              # Padding fraction around disc to form ROI (cup-only dataset)
 keep_roi_negatives: false      # Keep ROI crops even if cup not visible
 roi_extra: ""                  # Extra raw args to append
+roi_from_aug: false            # Use yolo_aug as ROI input instead of yolo_split
+
+# ---- disc-only dataset (derived from yolo_split / yolo_split_aug) ----
+yolo_disc_only: "{d['yolo_split'].parent}/yolo_split_disc_only"
+disc_only_from_aug_train: true
+disc_only_train_splits: ["train"]
+disc_only_copy_images: false
+disc_only_drop_empty: false
 
 # ---- viz_yolo_two_boxes.py ----
 viz_sample: 12                 # Number of random samples to visualize
@@ -812,97 +805,12 @@ viz_make_montage: false        # Save side-by-side [original | annotated]
 viz_extra: ""                  # Extra raw args to append
 """
 
+
 # ---------- MULTI-DATASET SUPPORT ----------
 
 def cfg_has_datasets(cfg: dict) -> bool:
     return isinstance(cfg.get("datasets"), list) and len(cfg["datasets"]) > 0
 
-def _log(msg: str):
-    print(f"[MDSET] {msg}")
-
-def _safe_link_or_copy(src: Path, dst: Path, do_copy: bool = False):
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists():
-        dst.unlink()
-    try:
-        if do_copy:
-            import shutil; shutil.copy2(src, dst)
-        else:
-            dst.symlink_to(src.resolve())
-    except Exception:
-        import shutil; shutil.copy2(src, dst)
-
-def stage_masks_to_boxes_one_dataset(
-    script_path: Path,
-    out_labels_root: Path,
-    ds: dict,
-    verbose: bool,
-    dry_run: bool,
-):
-    def _csv(v):
-        return v if isinstance(v, str) else ",".join(map(str, v))
-    """
-    Call masks_to_boxes.py for a single dataset block into a per-dataset labels folder.
-    Keeps stems identical to image stems (no renaming here).
-    """
-    tag = ds["tag"]
-    out_labels = out_labels_root / tag
-    out_csv    = out_labels_root / f"labels_summary_{tag}.csv"
-    args = [
-        sys.executable, str(script_path),
-        "--images",     str(_expand(ds["images_root"])),
-        "--disc_masks", str(_expand(ds["disc_masks"])),
-        "--cup_masks",  str(_expand(ds["cup_masks"])),
-        "--out_labels", str(out_labels),
-        "--out_csv",    str(out_csv),
-    ]
-    # dataset-specific switches
-    if ds.get("pad_pct")        is not None: args += ["--pad_pct", str(ds["pad_pct"])]
-    if ds.get("min_area_px")    is not None: args += ["--min_area_px", str(ds["min_area_px"])]
-    if ds.get("largest_only"):                 args += ["--largest_only"]
-    if ds.get("require_both"):                args += ["--require_both"]
-    if ds.get("recursive"):                   args += ["--recursive"]
-    if verbose:                                args += ["--verbose"]
-    if ds.get("exclude_name_contains"):
-        args += ["--exclude_name_contains", _csv(ds["exclude_name_contains"])]
-    if ds.get("include_name_contains"):
-        args += ["--include_name_contains", _csv(ds["include_name_contains"])]
-    run_cmd(args, dry_run=dry_run)
-
-def stage_masks_multi(args, defaults, cfg_dict: dict):
-    """Run masks_to_boxes for each dataset in cfg['datasets'] and build union I/O for split."""
-    script = defaults["script_dir"] / "masks_to_boxes.py"
-    require_dir(script.parent, "preprocess script dir")
-
-    # Per-dataset labels will be placed under labels_dir/<TAG>
-    per_ds_labels_root = _expand(args.labels_dir)
-    _ensure_dir(per_ds_labels_root)
-
-    datasets: List[dict] = cfg_dict["datasets"]
-    for ds in datasets:
-        stage_masks_to_boxes_one_dataset(
-            script_path=script,
-            out_labels_root=per_ds_labels_root,
-            ds=ds,
-            verbose=args.verbose,
-            dry_run=args.dry_run,
-        )
-
-    # Build union images + labels for the split stage
-    union_images_root = _expand(cfg_dict.get("union_images_root", defaults["images_root_guess"]))
-    union_labels_dir  = _expand(cfg_dict.get("union_labels_dir",  per_ds_labels_root / "__ALL__"))
-
-    build_union_images_and_labels(
-        datasets=datasets,
-        per_dataset_labels_root=per_ds_labels_root,
-        union_images_root=union_images_root,
-        union_labels_dir=union_labels_dir,
-        prefer_copy=False,  # set True if your system forbids symlinks
-    )
-
-    # Redirect subsequent stages to use the union
-    args.images_root = union_images_root
-    args.labels_dir  = union_labels_dir
 
 # ------------------------- CLI -------------------------
 
@@ -931,9 +839,9 @@ def parse_args() -> argparse.Namespace:
     )
 
     # which steps
-    ap.add_argument("--all", action="store_true", help="Run all stages (masks, split, augment, roi, viz).")
+    ap.add_argument("--all", action="store_true", help="Run all stages (masks, split, augment, disc_only, roi, viz).")
     ap.add_argument("--steps", default=None,
-                    help="Comma list OR YAML list of stages to run, e.g., 'masks,split,augment,roi,viz'.")
+                    help="Comma list OR YAML list of stages to run, e.g., 'masks,split,augment,disc_only,roi,viz'.")
 
     # small-subset test mode
     ap.add_argument("--subset_n", type=int, default=0,
@@ -1015,11 +923,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--roi_pad_pct",      type=float, default=0.10)
     ap.add_argument("--keep_roi_negatives", action="store_true", help="Keep ROI crops with no cup visible.")
     ap.add_argument("--roi_extra",        default="", help="Raw extra args to append to build_cup_roi_dataset.py")
-    ap.add_argument(
-        "--roi_from_aug",
-        action="store_true",
-        help="Use yolo_aug as ROI input instead of yolo_split."
-    )
+    ap.add_argument("--roi_from_aug", action="store_true", help="Use yolo_aug as ROI input instead of yolo_split.")
 
     # viz args
     ap.add_argument("--viz_sample",      type=int,   default=12)
@@ -1027,6 +931,15 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--viz_save_crops",  action="store_true")
     ap.add_argument("--viz_make_montage",action="store_true")
     ap.add_argument("--viz_extra",       default="", help="Raw extra args to append to viz_yolo_two_boxes.py")
+
+    # disc-only stage args
+    ap.add_argument("--yolo_disc_only", default=None, help="Output root for disc-only dataset.")
+    ap.add_argument("--disc_only_from_aug_train", action="store_true",
+                    help="Use yolo_split_aug for train splits when building disc-only.")
+    ap.add_argument("--disc_only_train_splits", default="train",
+                    help="Comma or YAML list of splits to source from aug root.")
+    ap.add_argument("--disc_only_copy_images", action="store_true", help="Copy instead of symlink.")
+    ap.add_argument("--disc_only_drop_empty", action="store_true", help="Drop images with empty filtered labels.")
 
     # Step 3: apply YAML defaults (if provided), then parse CLI to override
     if prelim.config:
@@ -1043,6 +956,7 @@ def parse_args() -> argparse.Namespace:
     args.steps = normalize_steps(args.steps)
     return args
 
+
 # ------------------------- main -------------------------
 
 def main():
@@ -1056,16 +970,19 @@ def main():
     args.yolo_aug   = _expand(args.yolo_aug)   if args.yolo_aug   else defaults["yolo_aug"]
     args.yolo_roi   = _expand(args.yolo_roi)   if args.yolo_roi   else defaults["yolo_roi"]
     args.viz_out    = _expand(args.viz_out)    if args.viz_out    else defaults["viz_out"]
+    args.yolo_disc_only = _expand(args.yolo_disc_only) if args.yolo_disc_only else (
+        defaults["yolo_split"].parent / "yolo_split_disc_only"
+    )
+
+    # Early create output roots (safe)
+    _ensure_paths([args.labels_dir, args.yolo_split, args.yolo_aug, args.yolo_roi, args.viz_out, args.yolo_disc_only])
 
     # Images root: provided or guess
-    if args.images_root:
-        args.images_root = _expand(args.images_root)
-    else:
-        args.images_root = defaults["images_root_guess"]
+    args.images_root = _expand(args.images_root) if args.images_root else defaults["images_root_guess"]
 
     # Stages to run
     if args.all:
-        stages = ["masks", "split", "augment", "roi", "viz"]
+        stages = ["masks", "split", "augment", "disc_only", "roi", "viz"]
     else:
         stages = args.steps
         if not stages:
@@ -1118,11 +1035,9 @@ def main():
                     n=args.subset_n,
                     seed=args.subset_seed,
                     copy=args.subset_copy,
-                    patient_regex=args.patient_regex,  # <-- add this
+                    patient_regex=args.patient_regex,
                 )
                 args.images_root = s_images
-                args.disc_masks  = s_disc
-                args.cup_masks   = s_cup
                 args.labels_dir  = subset_root / "labels"
                 args.yolo_split  = subset_root / "yolo_split"
                 args.yolo_aug    = subset_root / "yolo_split_aug"
@@ -1147,10 +1062,6 @@ def main():
             print(f"[WARN] --subset_n is applied only when the first stage is 'masks' or 'split'. "
                   f"First stage here is '{first_stage}', so subset mode is ignored.")
 
-    # Sanity create output roots early (where safe)
-    for p in [args.labels_dir, args.yolo_split, args.yolo_aug, args.yolo_roi, args.viz_out]:
-        _ensure_dir(p.parent if isinstance(p, Path) and p.suffix else p)
-
     # ---------- Dispatch stages ----------
     for s in stages:
         print(f"\n========== [STAGE: {s}{' (subset)' if subset_used else ''}] ==========")
@@ -1173,6 +1084,12 @@ def main():
             require_dir(args.yolo_split, "yolo_split")
             stage_augment(args, defaults)
 
+        elif s == "disc_only":
+            require_dir(args.yolo_split, "yolo_split")
+            if args.disc_only_from_aug_train:
+                require_dir(args.yolo_aug, "yolo_split_aug")
+            stage_disc_only(args, defaults)
+
         elif s == "roi":
             require_dir(args.yolo_split, "yolo_split")
             stage_build_roi(args, defaults)
@@ -1183,9 +1100,10 @@ def main():
             stage_viz(args, defaults)
 
         else:
-            raise SystemExit(f"[ERR] Unknown stage: {s}")
+            raise SystemExit(f("[ERR] Unknown stage: {s}"))
 
     print("\n[OK] Pipeline finished.")
+
 
 if __name__ == "__main__":
     main()

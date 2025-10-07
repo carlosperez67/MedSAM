@@ -5,17 +5,20 @@ Train a disc-only detector from an existing 2-class YOLO dataset (0=disc, 1=cup)
 
 What this script does
 ---------------------
-1) Builds a derived YOLO dataset "<data_root>_disc_only":
-   - Images are symlinked (default) or copied.
-   - Labels are filtered to keep only class 0 (disc).
-   - Optionally drop images whose filtered label becomes empty (--drop_empty).
-   - Writes an Ultralytics YAML ("od_only.yaml") with names: ["disc"].
+A) If a precomputed disc-only dataset already exists at <data_root>/od_only.yaml,
+   it uses that directly.
 
-2) Trains Ultralytics YOLO on that derived dataset (unless --train 0).
-3) Validates on test (if present) otherwise on val.
+B) Otherwise, it builds a derived disc-only YOLO dataset next to <data_root>:
+   <data_root>_disc_only/
+     - Images are symlinked (default) or copied.
+     - Labels are filtered to keep only class 0 (disc).
+     - Optionally drop images whose filtered label becomes empty (--drop_empty).
+     - Writes "od_only.yaml" with names: ["disc"].
 
-Project layout (defaults; can be overridden)
---------------------------------------------
+Then it trains Ultralytics YOLO (unless --train 0) and validates on test if present, else val.
+
+Default project layout (can be overridden)
+------------------------------------------
 PROJECT_DIR/
   data/yolo_split/              # input YOLO dataset root (images/{train,val,test}, labels/{...})
   weights/yolov8n.pt            # local weights
@@ -33,7 +36,7 @@ python train_stageA_disc_only.py \
   --model       /scratch/.../weights/yolov8n.pt \
   --copy_images
 
-# Validate only
+# Validate only (uses precomputed disc-only if present; otherwise builds it)
 python train_stageA_disc_only.py --train 0
 """
 
@@ -44,7 +47,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Tuple, Optional
 
 import yaml
 from ultralytics import YOLO
@@ -54,24 +57,23 @@ from device_utils import ultralytics_device_arg  # device string ("0" or "cpu")
 
 # ----------------------------- Dataclass -----------------------------
 
-# ----------------------------- Dataclass -----------------------------
-
 @dataclass
 class DiscOnlyConfig:
     # Core paths
     project_dir: Path
-    data_root: Path             # Base (non-augmented) YOLO dataset root
+    data_root: Path             # Could be base YOLO root OR a precomputed disc-only root
     model_path: Path
     runs_root: Path
 
-    # Augmentation support
+    # Augmentation support (for building disc-only train splits from an augmented set)
     aug_root: Optional[Path]    # Optional augmented YOLO dataset (for training splits only)
     train_splits: List[str]     # Which splits to source from aug_root (e.g., ["train"])
 
-    # Data handling
+    # Data handling for building the derived dataset
     copy_images: bool           # Copy vs symlink
     drop_empty: bool            # Drop images with empty filtered labels
 
+    # Training
     epochs: int
     imgsz: int
     batch: int
@@ -85,21 +87,18 @@ def _expand(p: str | Path) -> Path:
     """Expand ~ and resolve to an absolute Path."""
     return Path(os.path.expanduser(str(p))).resolve()
 
-
 def _ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
-
 
 def _place(src: Path, dst: Path, copy_files: bool) -> None:
     """Copy or symlink src → dst."""
     _ensure_dir(dst.parent)
     if copy_files:
         shutil.copy2(src, dst)
-    else:
-        if dst.exists() or dst.is_symlink():
-            dst.unlink()
-        dst.symlink_to(src.resolve())
-
+        return
+    if dst.exists() or dst.is_symlink():
+        dst.unlink()
+    dst.symlink_to(src.resolve())
 
 def _split_has_data(root: Path, split: str) -> bool:
     """Check if split has both images and labels present with at least one file each."""
@@ -111,6 +110,14 @@ def _split_has_data(root: Path, split: str) -> bool:
         return any(img_dir.iterdir()) and any(lbl_dir.iterdir())
     except Exception:
         return False
+
+def _disc_yaml_in(root: Path) -> Path:
+    """Return the expected disc-only YAML path inside a dataset root."""
+    return root / "od_only.yaml"
+
+def _has_precomputed_disc_only(root: Path) -> bool:
+    """True if root looks like a disc-only dataset (has od_only.yaml)."""
+    return _disc_yaml_in(root).exists()
 
 
 # ----------------------------- Label I/O -----------------------------
@@ -130,7 +137,6 @@ def _filter_label_lines_to_disc(lines: Iterable[str]) -> List[str]:
         if cls == 0:
             keep.append(ln)
     return keep
-
 
 def filter_labels_dir_to_disc(src_lbl_dir: Path, dst_lbl_dir: Path, drop_empty: bool) -> int:
     """
@@ -194,7 +200,7 @@ def build_disc_only_dataset(
     if _split_has_data(dst_root, "test"):
         data_yaml["test"] = "images/test"
 
-    od_yaml = dst_root / "od_only.yaml"
+    od_yaml = _disc_yaml_in(dst_root)
     od_yaml.write_text(yaml.safe_dump(data_yaml, sort_keys=False))
     return dst_root, od_yaml
 
@@ -206,7 +212,6 @@ def build_model(weights: Path) -> YOLO:
     if not weights.exists():
         raise SystemExit(f"[ERR] Model weights not found at: {weights}")
     return YOLO(str(weights))
-
 
 def train_model(model: YOLO, data_yaml: Path, cfg: DiscOnlyConfig, device: str) -> None:
     """Train the model if cfg.do_train is True."""
@@ -227,7 +232,6 @@ def train_model(model: YOLO, data_yaml: Path, cfg: DiscOnlyConfig, device: str) 
         single_cls=True,
     )
 
-
 def validate_model(model: YOLO, data_yaml: Path, imgsz: int, device: str) -> None:
     """Validate on 'test' if present in YAML else on 'val'."""
     y = yaml.safe_load(data_yaml.read_text())
@@ -239,15 +243,21 @@ def validate_model(model: YOLO, data_yaml: Path, imgsz: int, device: str) -> Non
 
 # ----------------------------- Arg parsing / Config -----------------
 
+def _parse_train_splits(val: str | List[str]) -> List[str]:
+    if isinstance(val, list):
+        return [str(s).strip() for s in val if str(s).strip()]
+    return [s.strip() for s in str(val).split(",") if s.strip()]
+
 def build_config_from_cli() -> DiscOnlyConfig:
     ap = argparse.ArgumentParser(description="Train a disc-only detector from a 2-class YOLO dataset (0=disc,1=cup).")
 
     ap.add_argument("--project_dir", default=".", help="Project root")
     ap.add_argument("--data_root", default=None,
-                    help="Base YOLO dataset root (defaults to PROJECT_DIR/data/yolo_split)")
+                    help="YOLO dataset root. If it already contains od_only.yaml, it is treated as a disc-only dataset; "
+                         "otherwise this script will derive '<data_root>_disc_only'.")
     ap.add_argument("--aug_root", default=None, help="Augmented YOLO dataset root (use ONLY for training splits)")
     ap.add_argument("--train_splits", default="train",
-                                                          help="Comma list OR YAML list of splits to source from aug_root (default: 'train')")
+                    help="Comma list OR YAML list of splits to source from aug_root (default: 'train')")
     ap.add_argument("--model", default=None,
                     help="Weights path (defaults to PROJECT_DIR/weights/yolov8n.pt)")
     ap.add_argument("--project", default=None,
@@ -261,7 +271,7 @@ def build_config_from_cli() -> DiscOnlyConfig:
                     help="Ultralytics experiment name (runs subfolder).")
     ap.add_argument("--train", type=int, default=1, help="1=train+val, 0=val-only")
 
-    # Data curation
+    # Data curation (used if we need to build the disc-only dataset)
     ap.add_argument("--copy_images", action="store_true",
                     help="Copy images instead of symlinking (default: symlink)")
     ap.add_argument("--drop_empty", action="store_true",
@@ -273,17 +283,13 @@ def build_config_from_cli() -> DiscOnlyConfig:
     project_dir = _expand(args.project_dir)
 
     data_root = _expand(args.data_root) if args.data_root else (project_dir / "data" / "yolo_split")
-    # NEW:
     aug_root = _expand(args.aug_root) if args.aug_root else None
-    # support comma list or YAML-ish list string
-    train_splits = (
-        [s.strip() for s in args.train_splits.split(",") if s.strip()]
-        if isinstance(args.train_splits, str) else list(args.train_splits)
-    )
+    train_splits = _parse_train_splits(args.train_splits)
 
     model_path = _expand(args.model) if args.model else (project_dir / "weights" / "yolov8n.pt")
     runs_root = _expand(args.project) if args.project else (project_dir / "bounding_box" / "runs" / "detect")
 
+    # Basic sanity for provided root (must look like a YOLO dataset root)
     if not (data_root / "images").exists() or not (data_root / "labels").exists():
         raise SystemExit(f"[ERR] Not a YOLO dataset root: {data_root} (missing images/ or labels/)")
     _ensure_dir(runs_root)
@@ -298,8 +304,8 @@ def build_config_from_cli() -> DiscOnlyConfig:
         data_root=data_root,
         model_path=model_path,
         runs_root=runs_root,
-        aug_root=aug_root,  # NEW
-        train_splits=train_splits,  # NEW
+        aug_root=aug_root,
+        train_splits=train_splits,
         copy_images=bool(args.copy_images),
         drop_empty=bool(args.drop_empty),
         epochs=int(args.epochs),
@@ -315,17 +321,22 @@ def build_config_from_cli() -> DiscOnlyConfig:
 def main() -> None:
     cfg = build_config_from_cli()
 
-    # 1) Build the disc-only derived dataset
-    print(f"[INFO] Building disc-only dataset from: {cfg.data_root}")
-    out_root, od_yaml = build_disc_only_dataset(
-        cfg.data_root,
-        copy_images=cfg.copy_images,
-        drop_empty=cfg.drop_empty,
-        aug_root=cfg.aug_root,
-        train_splits=cfg.train_splits,
-    )
-    print(f"[OK] Disc-only dataset: {out_root}")
-    print(f"[OK] Dataset YAML:      {od_yaml}")
+    # 1) Determine disc-only dataset YAML to use (precomputed vs build)
+    if _has_precomputed_disc_only(cfg.data_root):
+        od_yaml = _disc_yaml_in(cfg.data_root)
+        print(f"[INFO] Using precomputed disc-only dataset: {cfg.data_root}")
+        print(f"[INFO] Dataset YAML: {od_yaml}")
+    else:
+        print(f"[INFO] Building disc-only dataset from: {cfg.data_root}")
+        out_root, od_yaml = build_disc_only_dataset(
+            cfg.data_root,
+            copy_images=cfg.copy_images,
+            drop_empty=cfg.drop_empty,
+            aug_root=cfg.aug_root,
+            train_splits=cfg.train_splits,
+        )
+        print(f"[OK] Disc-only dataset: {out_root}")
+        print(f"[OK] Dataset YAML:      {od_yaml}")
 
     # 2) Build model & device
     device = ultralytics_device_arg()  # "0" or "cpu"
@@ -335,6 +346,7 @@ def main() -> None:
     if cfg.do_train:
         print(f"[INFO] Training… (epochs={cfg.epochs}, imgsz={cfg.imgsz}, batch={cfg.batch})")
     train_model(model, od_yaml, cfg, device)
+
     print("[INFO] Validating…")
     validate_model(model, od_yaml, cfg.imgsz, device)
     print("[OK] Done.")
