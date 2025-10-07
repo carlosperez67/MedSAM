@@ -48,6 +48,12 @@ STAGEB_NAME="stageB_cup_roi"
 OUT_JSONL="${BB_DIR}/data/two_stage_boxes.jsonl"
 # ==================================================================
 
+# ===== Export ALL config so srun subshells can see them =====
+export TRAIN_MODE A_GPUS B_GPUS A_CPUS B_CPUS
+export PROJECT_DIR ENV_PREFIX BB_DIR RUNS_DIR
+export DATA_ROOT AUG_ROOT ROI_OUT DISC_ROOT
+export YOLO_WEIGHTS STAGEA_NAME STAGEB_NAME OUT_JSONL
+
 # ========================= Caches / temp =========================
 export XDG_CACHE_HOME="/scratch/st-ipor-1/cperez/.cache"
 export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
@@ -66,6 +72,10 @@ echo "SLURM Job ID : ${SLURM_JOB_ID}"
 echo "Node list    : ${SLURM_JOB_NODELIST}"
 echo "Working dir  : $(pwd)"
 echo "Runs dir     : ${RUNS_DIR}"
+echo "DATA_ROOT    : ${DATA_ROOT}"
+echo "AUG_ROOT     : ${AUG_ROOT}"
+echo "DISC_ROOT    : ${DISC_ROOT}"
+echo "ROI_OUT      : ${ROI_OUT}"
 nvidia-smi -L || echo "nvidia-smi not available"
 
 python - <<'PY'
@@ -114,6 +124,9 @@ make_devices_csv() {
 # ========================= Stage A =========================
 run_stageA() {
   echo "[STAGE A] Train disc-only detector…"
+  echo "[STAGE A] DISC_ROOT=${DISC_ROOT}"
+  echo "[STAGE A] DATA_ROOT=${DATA_ROOT} | AUG_ROOT=${AUG_ROOT}"
+
   if [[ -d "${DISC_ROOT}" && -f "${DISC_ROOT}/od_only.yaml" ]]; then
     echo "[STAGE A] Using PREBUILT disc-only dataset at ${DISC_ROOT}"
     python "${BB_DIR}/train/train_stageA_disc_only.py" \
@@ -140,6 +153,7 @@ run_stageA() {
 # ========================= Stage B =========================
 run_stageB() {
   echo "[STAGE B] Train cup-only detector on prebuilt ROI dataset…"
+  echo "[STAGE B] ROI_OUT=${ROI_OUT}"
   check_dir "${ROI_OUT}" "ROI dataset"
 
   python "${BB_DIR}/train/train_stageB_cup_roi.py" \
@@ -153,6 +167,9 @@ run_stageB() {
 # Export functions for srun steps
 export -f run_stageA run_stageB die check_file check_dir
 
+# For robust step handling
+SRUN_COMMON="--kill-on-bad-exit=1 --exclusive -N1 -n1"
+
 # ========================= Dispatcher =========================
 case "${TRAIN_MODE}" in
   parallel)
@@ -163,36 +180,61 @@ case "${TRAIN_MODE}" in
     A_DEV="$(make_devices_csv "${A_GPUS}")"
     B_DEV="$(make_devices_csv "${B_GPUS}")"
 
-    # Launch A & B as separate srun steps. SLURM cgroups will isolate GPUs so each step
-    # only sees its assigned devices. Inside each step, Ultralytics/torch will see
-    # CUDA_VISIBLE_DEVICES as those GPUs; we set YOLO_DEVICES="0,1,..." for DDP.
-    srun --exclusive -N1 -n1 \
+    # Launch A & B as separate srun steps in background, capture PIDs
+    pids=()
+    names=()
+
+    srun ${SRUN_COMMON} \
          --gpus-per-task="${A_GPUS}" \
          --cpus-per-task="${A_CPUS}" \
          --export=ALL,YOLO_DEVICES="${A_DEV}",OMP_NUM_THREADS="${A_CPUS}" \
          bash -lc 'run_stageA' &
+    pids+=($!)
+    names+=("StageA")
 
-    srun --exclusive -N1 -n1 \
+    srun ${SRUN_COMMON} \
          --gpus-per-task="${B_GPUS}" \
          --cpus-per-task="${B_CPUS}" \
          --export=ALL,YOLO_DEVICES="${B_DEV}",OMP_NUM_THREADS="${B_CPUS}" \
          bash -lc 'run_stageB' &
+    pids+=($!)
+    names+=("StageB")
 
-    wait
+    # Wait for both; if any fails, kill the other and exit 1
+    overall_rc=0
+    for i in "${!pids[@]}"; do
+      pid="${pids[$i]}"
+      name="${names[$i]}"
+      if ! wait "$pid"; then
+        echo "[ERROR] ${name} failed (PID ${pid}). Terminating remaining steps…" >&2
+        overall_rc=1
+        # terminate the other(s)
+        for j in "${!pids[@]}"; do
+          if [[ $j -ne $i ]]; then
+            kill -TERM "${pids[$j]}" 2>/dev/null || true
+          fi
+        done
+      fi
+    done
+
+    if (( overall_rc != 0 )); then
+      echo "[FATAL] One or more stages failed." >&2
+      exit 1
+    fi
     ;;
 
   A-only)
     echo "[MODE] Stage A only"
     export YOLO_DEVICES="$(make_devices_csv "${A_GPUS}")"
     export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
-    srun --exclusive -N1 -n1 --gpus-per-task="${A_GPUS}" bash -lc 'run_stageA'
+    srun ${SRUN_COMMON} --gpus-per-task="${A_GPUS}" bash -lc 'run_stageA'
     ;;
 
   B-only)
     echo "[MODE] Stage B only"
     export YOLO_DEVICES="$(make_devices_csv "${B_GPUS}")"
     export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
-    srun --exclusive -N1 -n1 --gpus-per-task="${B_GPUS}" bash -lc 'run_stageB'
+    srun ${SRUN_COMMON} --gpus-per-task="${B_GPUS}" bash -lc 'run_stageB'
     ;;
 
   *)
