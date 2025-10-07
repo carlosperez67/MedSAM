@@ -104,7 +104,7 @@ run_stageB() {
   # Explicitly pass project_dir so defaults resolve to BB_DIR/{data,runs,weights}
   # No other flags needed if you’re happy with defaults.
   python "${BB_DIR}/train/train_stageB_cup_roi.py" \
-    --project_dir "${BB_DIR}"
+    --project_dir "${PROJECT_DIR}"
 
   local best="${RUNS_DIR}/${STAGEB_NAME}/weights/best.pt"
   check_file "${best}" "Stage B best checkpoint"
