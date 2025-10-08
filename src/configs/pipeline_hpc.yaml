@@ -1,0 +1,44 @@
+# Minimal knobs; everything else uses sensible defaults in PipelineConfig
+
+project_dir: "/scratch/st-ipor-1/cperez/MedSAM"
+
+# Input roots
+images_root: "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/images"
+disc_masks:  "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/disc_masks"
+cup_masks:   "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/cup_masks"
+
+# Outputs
+yolo_split:     "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/yolo_split"
+yolo_aug:       "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/yolo_split_aug"
+yolo_roi:       "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/yolo_split_cupROI"
+yolo_disc_only: "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/yolo_split_disc_only"
+
+# Splitting
+val_frac: 0.15
+test_frac: 0.15
+seed: 1337
+patient_regex: ""   # optional; if set, must have ONE capturing group
+
+# Filters (optional)
+include_name_contains: []
+exclude_name_contains: []
+recursive: true
+
+# Augment
+augment_enabled: true
+augment_splits: ["train"]  # usually augment train only
+augment_multiplier: 2
+augment_out_ext: ".jpg"
+include_images_without_labels: false
+prefer_copy: false
+
+# ROI
+roi_pad_pct: 0.10
+keep_roi_negatives: false
+roi_from_aug: false
+
+# Disc-only
+disc_only_from_aug_train: true
+disc_only_train_splits: ["train"]   # handled internally when mixing aug train
+disc_only_copy_images: false
+disc_only_drop_empty: false
