@@ -28,16 +28,29 @@ class Image:
     height: int
     split: Optional[str] = None  # "train" | "val" | "test" | None
 
-    # Annotations (GT & predictions) — optional, set later if needed
+    # GT Mask
     gt_disc_mask: Optional[BinaryMaskRef] = None
     gt_cup_mask: Optional[BinaryMaskRef] = None
+
+    # MedSam Mask Prediction
     pred_disc_mask: Optional[BinaryMaskRef] = None
     pred_cup_mask: Optional[BinaryMaskRef] = None
 
+    # BB from GT Mask
     gt_disc_box: Optional[BoundingBox] = None
     gt_cup_box: Optional[BoundingBox] = None
+
+    # Predicted BB from Object Recognition Model
+    inter_pred_disc_box: Optional[BoundingBox] = None
+    inter_pred_cup_box: Optional[BoundingBox] = None
+
+    # Predicted BB from MedSam Mask
     pred_disc_box: Optional[BoundingBox] = None
     pred_cup_box: Optional[BoundingBox] = None
+
+    gt_cd_ratio: Optional[float] = None
+    pred_cd_ratio: Optional[float] = None
+
 
     # Optional bookkeeping
     yolo_label_path: Optional[Path] = None
@@ -90,11 +103,11 @@ class Image:
         if which == Structure.DISC and kind == LabelType.GT:
             self.gt_disc_box = box
         elif which == Structure.DISC and kind == LabelType.PRED:
-            self.pred_disc_box = box
+            self.inter_pred_disc_box = box
         elif which == Structure.CUP and kind == LabelType.GT:
             self.gt_cup_box = box
         elif which == Structure.CUP and kind == LabelType.PRED:
-            self.pred_cup_box = box
+            self.inter_pred_cup_box = box
         else:
             raise ValueError(f"Unsupported (which, kind)=({which},{kind})")
 
@@ -110,10 +123,10 @@ class Image:
             self.gt_disc_box = self.gt_disc_mask.bbox()
         if self.gt_cup_box is None and self.gt_cup_mask is not None:
             self.gt_cup_box = self.gt_cup_mask.bbox()
-        if self.pred_disc_box is None and self.pred_disc_mask is not None:
-            self.pred_disc_box = self.pred_disc_mask.bbox()
-        if self.pred_cup_box is None and self.pred_cup_mask is not None:
-            self.pred_cup_box = self.pred_cup_mask.bbox()
+        if self.inter_pred_disc_box is None and self.pred_disc_mask is not None:
+            self.inter_pred_disc_box = self.pred_disc_mask.bbox()
+        if self.inter_pred_cup_box is None and self.pred_cup_mask is not None:
+            self.inter_pred_cup_box = self.pred_cup_mask.bbox()
 
     def yolo_lines_2class(self, use_gt: bool = True) -> Iterable[str]:
         """Yield normalized YOLO lines: '<cls> <xc> <yc> <w> <h>' (0=disc, 1=cup)."""
@@ -121,7 +134,7 @@ class Image:
         boxes = (
             (0, self.gt_disc_box), (1, self.gt_cup_box)
         ) if use_gt else (
-            (0, self.pred_disc_box), (1, self.pred_cup_box)
+            (0, self.inter_pred_disc_box), (1, self.inter_pred_cup_box)
         )
         W, H = self.width, self.height
         for cls, box in boxes:
@@ -133,13 +146,13 @@ class Image:
     # ---------- small metrics ----------
 
     def disc_iou(self) -> Optional[float]:
-        if self.gt_disc_box and self.pred_disc_box:
-            return self.gt_disc_box.iou(self.pred_disc_box)
+        if self.gt_disc_box and self.inter_pred_disc_box:
+            return self.gt_disc_box.iou(self.inter_pred_disc_box)
         return None
 
     def cup_iou(self) -> Optional[float]:
-        if self.gt_cup_box and self.pred_cup_box:
-            return self.gt_cup_box.iou(self.pred_cup_box)
+        if self.gt_cup_box and self.inter_pred_cup_box:
+            return self.gt_cup_box.iou(self.inter_pred_cup_box)
         return None
 
     # ---------- serialization ----------
@@ -190,8 +203,8 @@ class Image:
 
         obj.gt_disc_box = _box(d.get("gt_disc_box"))
         obj.gt_cup_box = _box(d.get("gt_cup_box"))
-        obj.pred_disc_box = _box(d.get("pred_disc_box"))
-        obj.pred_cup_box = _box(d.get("pred_cup_box"))
+        obj.inter_pred_disc_box = _box(d.get("pred_disc_box"))
+        obj.inter_pred_cup_box = _box(d.get("pred_cup_box"))
         return obj
 
     def to_json(self) -> str:
