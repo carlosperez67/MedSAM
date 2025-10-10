@@ -201,6 +201,35 @@ def _square_crop_bounds(cx, cy, side, W, H):
     y1 = _clamp(y1, 1, H)
     return [x0, y0, x1, y1]
 
+def _make_gaussian_noise(var_limit: Tuple[float, float] | List[float] | float, mean: float = 0.0):
+    """
+    Construct a Gaussian noise transform that works across Albumentations versions.
+    Tries GaussNoise(var_limit=...) first, then GaussianNoise(sigma_limit=...).
+    """
+    # 1) Try GaussNoise(var_limit=..., mean=...)
+    try:
+        return A.GaussNoise(var_limit=var_limit, mean=mean, p=1.0)
+    except Exception:
+        pass
+
+    # 2) Try GaussianNoise(sigma_limit=..., mean=...). Convert variance -> sigma if needed.
+    try:
+        if isinstance(var_limit, (list, tuple)) and len(var_limit) == 2:
+            sigma_limit = (float(var_limit[0]) ** 0.5, float(var_limit[1]) ** 0.5)
+        else:
+            sigma = float(var_limit) ** 0.5
+            sigma_limit = (sigma, sigma)
+        return A.GaussianNoise(sigma_limit=sigma_limit, mean=mean, p=1.0)
+    except Exception:
+        pass
+
+    # 3) Last resort: minimal constructor without args
+    try:
+        return A.GaussianNoise(p=1.0)
+    except Exception:
+        # If even this fails, return a no-op to avoid breaking the pipeline
+        return A.NoOp(p=1.0)
+
 
 # ----------------------------- in-code config -------------------------------
 
@@ -496,7 +525,7 @@ class Augmentor:
             ops.append(
                 A.OneOf(
                     [
-                        A.GaussNoise(var_limit=s.gauss_noise_var, mean=0, p=1.0),
+                        _make_gaussian_noise(s.gauss_noise_var, mean=0.0),
                         A.ISONoise(intensity=(0.1, 0.5), color_shift=(0.01, 0.05), p=1.0),
                     ],
                     p=s.noise_p,
