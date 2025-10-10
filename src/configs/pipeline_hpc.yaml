@@ -1,44 +1,63 @@
-# Minimal knobs; everything else uses sensible defaults in PipelineConfig
+# === OOP Preprocessing Pipeline Config (HPC) ===
 
+# ---- Core project paths ----
 project_dir: "/scratch/st-ipor-1/cperez/MedSAM"
 
-# Input roots
+# (Single-dataset keys kept for back-compat; ignored during 'collect' when 'datasets:' is present)
 images_root: "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/images"
 disc_masks:  "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/disc_masks"
 cup_masks:   "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/cup_masks"
 
-# Outputs
-yolo_split:     "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/yolo_split"
-yolo_aug:       "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/yolo_split_aug"
-yolo_roi:       "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/yolo_split_cupROI"
-yolo_disc_only: "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/yolo_split_disc_only"
+# ---- Outputs ----
+labels_dir:      "/scratch/st-ipor-1/cperez/MedSAM/data/labels"
+yolo_split:      "/scratch/st-ipor-1/cperez/MedSAM/data/yolo_split"
+yolo_aug:        "/scratch/st-ipor-1/cperez/MedSAM/data/yolo_split_aug"
+yolo_roi:        "/scratch/st-ipor-1/cperez/MedSAM/data/yolo_split_cupROI"
+yolo_disc_only:  "/scratch/st-ipor-1/cperez/MedSAM/data/yolo_split_disc_only"
+viz_out:         "/scratch/st-ipor-1/cperez/MedSAM/data/viz_labels"
 
-# Splitting
+# ---- Which stages to run ----
+all: true         # defaults to collect,split,save,augment,disc_only,roi when steps is not set
+steps: null       # or e.g. ["collect","split","save","augment","disc_only","roi"]
+
+# ---- Small subset mode (applies after collect, before split) ----
+subset_n: 0                 # 0 disables subsetting on HPC; set >0 to enable
+subset_seed: 4343
+subset_copy: false          # OOP uses symlinks by default
+prefer_copy: false          # set true only if your FS disallows symlinks
+
+# ---- Split config ----
 val_frac: 0.15
 test_frac: 0.15
 seed: 1337
-patient_regex: ""   # optional; if set, must have ONE capturing group
+patient_regex: ""           # optional regex with ONE capturing group for patient ID
 
-# Filters (optional)
-include_name_contains: []
-exclude_name_contains: []
-recursive: true
-
-# Augment
+# ---- Augment (OOP Augmentor) ----
 augment_enabled: true
-augment_splits: ["train"]  # usually augment train only
-augment_multiplier: 2
-augment_out_ext: ".jpg"
+aug_yaml: "/scratch/st-ipor-1/cperez/MedSAM/configs/augment.yaml"
+augment_splits: ["train"]   # augment only the train split
+augment_multiplier: 2       # N augmented versions per original
+augment_out_ext: ".jpg"     # output format for augmented images
 include_images_without_labels: false
-prefer_copy: false
 
-# ROI
-roi_pad_pct: 0.10
+# ---- Disc-only (OD single-class derived) ----
+disc_only_from_aug_train: false    # match local behavior; set true if you want OD train from augmented
+disc_only_train_splits: ["train"]
+disc_only_copy_images: false       # false = symlink
+disc_only_drop_empty: false
+
+# ---- ROI (cup-only dataset built from OD ROI) ----
+roi_pad_pct: 0.0
 keep_roi_negatives: false
 roi_from_aug: false
 
-# Disc-only
-disc_only_from_aug_train: true
-disc_only_train_splits: ["train"]   # handled internally when mixing aug train
-disc_only_copy_images: false
-disc_only_drop_empty: false
+# ---- Multi-dataset blocks (used by 'collect' in OOP pipeline) ----
+# Add additional datasets by appending blocks here.
+datasets:
+  - tag: hpc_ds
+    images_root: "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/images"
+    disc_masks:  "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/disc_masks"
+    cup_masks:   "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/cup_masks"
+    recursive: true
+    include_name_contains: []   # e.g., ["PAPILA"] to include only PAPILA
+    exclude_name_contains: []   # e.g., ["PAPILA"] to exclude PAPILA

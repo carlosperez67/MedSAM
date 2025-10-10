@@ -1,17 +1,21 @@
-# === Augment YOLO DS Config (YAML) ===
-# Pass to augment_yolo_ds.py via: --aug_yaml /path/to/augment_config.yaml
-
-# --- top-level controls matching your pipeline settings ---
+# Top-level controls
 out_ext: ".jpg"
 multiplier: 2
-include_images_without_labels: true
+include_images_without_labels: false
 seed: 1337
 write_yaml: true
 
-# --- Albumentations transform (defaults mirror the script's previous CLI defaults) ---
+# Unified object inclusion policy
+#   full        → require at least one FULLY contained object per crop; keep only fully contained boxes
+#   partial     → allow partial boxes; require at least one with visibility ≥ min_visibility
+#   negative_ok → allow crops with no objects; (negatives will be emitted)
+object_policy: partial
+min_visibility: 0.20
+
+# Albumentations transform
 transform:
   hflip_p: 0.5
-  vflip_p: 0.5
+  vflip_p: 0.0
   affine:
     p: 0.7
     scale: [0.9, 1.1]
@@ -29,33 +33,26 @@ transform:
     saturation: 0.2
     hue: 0.1
 
-# --- tiling (grid sweep) — copied from your pipeline values ---
+# Tiling
 tiling:
   enable: true
   tile_size: 512
-  tile_overlap: 0.40
-  min_tile_vis: 0.05
-  keep_empty_tiles: true
+  overlap: 0.40
   from_aug: false
 
-# --- zoom crops (object-centric) — copied from your pipeline values ---
+# Object-centric zoom crops
 zoom_crops:
   enable: true
   scales: [0.35, 0.5, 0.7]
   per_obj: 2
-  on: "both"            # disc | cup | both | any
+  on: "both"      # disc | cup | both | any
   out_size: 640
   jitter: 0.05
-  min_vis: 0.10
-  from_aug: false
-  keep_empty: true
 
-# --- multi-scale sliding zoom sweep — copied from your pipeline values ---
+# Multi-scale zoom sweep
 zoom_sweep:
   enable: true
   scales: [0.35, 0.5, 0.7]
   overlap: 0.25
-  min_vis: 0.10
-  keep_empty: true
   out_size: 640
   from_aug: false

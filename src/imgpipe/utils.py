@@ -10,6 +10,7 @@ import shutil
 from pathlib import Path
 from typing import Iterable, Dict, List
 
+
 IMG_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")
 
 
@@ -71,21 +72,19 @@ def read_image_size(img_path: Path) -> Tuple[int, int]:
         if im is None:
             raise ValueError("cv2.imread returned None")
         h, w = im.shape[:2]
-        return (w, h)
+        return w, h
     except Exception:
         pass
     try:
         import imageio.v3 as iio  # type: ignore
         im = iio.imread(str(img_path))
         h, w = im.shape[:2]
-        return (w, h)
+        return w, h
     except Exception as e:
         raise RuntimeError(f"Unable to read image size for {img_path}: {e}") from e
 
-
 def ensure_bool_mask(arr: np.ndarray) -> np.ndarray:
     return arr.astype(bool, copy=False)
-
 
 def xyxy_to_xc_yc_wh(x1: float, y1: float, x2: float, y2: float):
     w = max(0.0, x2 - x1)
@@ -94,10 +93,10 @@ def xyxy_to_xc_yc_wh(x1: float, y1: float, x2: float, y2: float):
     yc = y1 + h / 2.0
     return xc, yc, w, h
 
-
 def xc_yc_wh_to_xyxy(xc: float, yc: float, w: float, h: float):
     x1 = xc - w / 2.0
     y1 = yc - h / 2.0
     x2 = xc + w / 2.0
     y2 = yc + h / 2.0
     return x1, y1, x2, y2
+
