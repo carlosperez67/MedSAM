@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=preprocess_oop
+#SBATCH --job-name=preprocess_oop_test
 #SBATCH --account=st-ipor-1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
