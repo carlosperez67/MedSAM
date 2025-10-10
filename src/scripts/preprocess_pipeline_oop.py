@@ -4,12 +4,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from bounding_box.predict_visualize import ensure_dir
 from src.imgpipe.collector import DatasetCollector, normalize_steps
 from src.imgpipe.config import PipelineConfig
 from src.imgpipe.dataset import Dataset
 from src.imgpipe.roi import ROIDatasetBuilder
 from src.imgpipe.disc_only import DiscOnlyDatasetBuilder
+from src.imgpipe.utils import ensure_dir
 
 
 def subset_roots(base_project_dir: Path, n: int, seed: int) -> dict[str, Path]:
