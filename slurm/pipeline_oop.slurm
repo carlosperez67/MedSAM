@@ -41,6 +41,9 @@ export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export NUMEXPR_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export PYTHONUNBUFFERED=1
 
+export PYTHONPATH="$PROJECT_DIR/src:$PYTHONPATH"
+
+
 # --- Sanity checks ---
 if [[ ! -f "$PIPELINE" ]]; then
   echo "[ERR] Pipeline not found: $PIPELINE" >&2
