@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=two-stage-train-B-only
+#SBATCH --job-name=two-stage
 #SBATCH --account=st-ipor-1-gpu
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
@@ -46,7 +46,7 @@ export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
 export TMPDIR="${PROJECT_DIR}/tmp"
 mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR" "$TMPDIR"
 
-mkdir -p "${PROJECT_DIR}/logs" "${RUNS_DIR}" "${BB_DIR}/data"
+mkdir -p "${PROJECT_DIR}/logs" "${RUNS_DIR}" "${PROJECT_DIR}/data"
 cd "${PROJECT_DIR}"
 
 # --------------------------- Env -----------------------------------
@@ -83,7 +83,7 @@ check_dir()  { [[ -d "$1" ]] || die "$2 not found: $1"; }
 run_stageA() {
   echo "[STAGE A] Train disc-only detector using PREBUILT disc-only dataset…"
   check_dir  "${DISC_ROOT}" "Prebuilt disc-only root"
-  check_file "${DISC_ROOT}/od_only.yaml" "Disc-only YAML (od_only.yaml)"
+  check_file "${DISC_ROOT}/data.yaml" "Disc-only YAML (od_only.yaml)"
 
   # Minimal CLI: just point --data_root at the disc-only root; no --aug_root needed.
   python "${BB_DIR}/train/train_stageA_disc_only.py" \
