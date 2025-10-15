@@ -9,12 +9,12 @@ disc_masks:  "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/disc_masks"
 cup_masks:   "/scratch/st-ipor-1/cperez/MedSAM/bounding_box/data/cup_masks"
 
 # ---- Outputs ----
-labels_dir:      "/scratch/st-ipor-1/cperez/MedSAM/data/labels"
-yolo_split:      "/scratch/st-ipor-1/cperez/MedSAM/data/yolo_split"
-yolo_aug:        "/scratch/st-ipor-1/cperez/MedSAM/data/yolo_split_aug"
-yolo_roi:        "/scratch/st-ipor-1/cperez/MedSAM/data/yolo_split_cupROI"
-yolo_disc_only:  "/scratch/st-ipor-1/cperez/MedSAM/data/yolo_split_disc_only"
-viz_out:         "/scratch/st-ipor-1/cperez/MedSAM/data/viz_labels"
+labels_dir:      "/scratch/st-ipor-1/cperez/MedSAM/data2/labels"
+yolo_split:      "/scratch/st-ipor-1/cperez/MedSAM/data2/yolo_split"
+yolo_aug:        "/scratch/st-ipor-1/cperez/MedSAM/data2/yolo_split_aug"
+yolo_roi:        "/scratch/st-ipor-1/cperez/MedSAM/data2/yolo_split_cupROI"
+yolo_disc_only:  "/scratch/st-ipor-1/cperez/MedSAM/data2/yolo_split_disc_only"
+viz_out:         "/scratch/st-ipor-1/cperez/MedSAM/data2/viz_labels"
 
 # ---- Which stages to run ----
 all: true         # defaults to collect,split,save,augment,disc_only,roi when steps is not set
