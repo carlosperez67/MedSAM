@@ -5,25 +5,89 @@ import argparse
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
 
-from src.imgpipe.binary_mask_ref import BinaryMaskRef
+from ultralytics import YOLO  # <-- for optional cup-on-ROI model
 
-# ---- Your OOP pieces ----
+from src.imgpipe.binary_mask_ref import BinaryMaskRef
 from src.imgpipe.enums import LabelType, Structure
 from src.imgpipe.image import Image
 from src.imgpipe.bounding_box import BoundingBox
 from src.imgpipe.collector import DatasetCollector, group_by_subject
 from src.imgpipe.utils import ensure_dir, stem_map_by_first_match
-from src.model.MedSAM_infer import MedSAMModel, medsam_infer, _embed_image_1024, load_medsam, _pick_device
+from src.model.MedSAM_infer import (
+    MedSAMModel, medsam_infer, _embed_image_1024, load_medsam, _pick_device
+)
 
 # NOTE: adjust this import path if needed
 from src.model.predict_bounding_box import BoundingBoxPredictor, LabelWriter
-from src.model.utils import overlay_masks_and_boxes, cdr_from_masks, make_side_by_side, load_image_bgr, \
+from src.model.utils import (
+    overlay_masks_and_boxes, cdr_from_masks, make_side_by_side, load_image_bgr,
     shrink_box_to_fit_mask, tight_bbox_from_mask, save_mask_png, expand, dice
+)
+
+
+# --------------------------- small helpers ---------------------------
+
+def _save_viz_image(path: Path, bgr: np.ndarray) -> None:
+    ensure_dir(path.parent)
+    cv2.imwrite(str(path), bgr)
+
+def _best_box_from_result(result, conf_thres: float) -> Optional[Tuple[Tuple[int, int, int, int], float]]:
+    """
+    From one Ultralytics result, return (xyxy_int, conf) for the highest-confidence box >= conf_thres.
+    """
+    if result is None or result.boxes is None or len(result.boxes) == 0:
+        return None
+    boxes = result.boxes
+    conf = boxes.conf.detach().cpu().numpy()
+    xyxy = boxes.xyxy.detach().cpu().numpy()
+    i = int(np.argmax(conf))
+    if conf[i] < conf_thres:
+        return None
+    x1, y1, x2, y2 = map(float, xyxy[i])
+    return (int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))), float(conf[i])
+
+def _square_crop_bounds(cx: float, cy: float, side: float, W: int, H: int) -> Tuple[int, int, int, int]:
+    half = side / 2.0
+    x0 = int(round(cx - half)); y0 = int(round(cy - half))
+    x1 = int(round(cx + half)); y1 = int(round(cy + half))
+    # clamp & adjust
+    if x0 < 0:  x1 -= x0; x0 = 0
+    if y0 < 0:  y1 -= y0; y0 = 0
+    if x1 > W:
+        shift = x1 - W; x0 = max(0, x0 - shift); x1 = W
+    if y1 > H:
+        shift = y1 - H; y0 = max(0, y0 - shift); y1 = H
+    x0 = max(0, min(x0, W - 1))
+    y0 = max(0, min(y0, H - 1))
+    x1 = max(1, min(x1, W))
+    y1 = max(1, min(y1, H))
+    return x0, y0, x1, y1
+
+def _roi_from_disc_mask(disc_mask: np.ndarray,
+                        fallback_box: Tuple[int,int,int,int],
+                        pad_frac: float,
+                        W: int, H: int) -> Tuple[int,int,int,int]:
+    """
+    Square ROI centered on disc using the mask's tight bbox (fallback to YOLO disc box if mask empty).
+    side = max(dw, dh) * (1 + 2*pad_frac)
+    """
+    tight = tight_bbox_from_mask(disc_mask)
+    if tight is None:
+        x1, y1, x2, y2 = fallback_box
+    else:
+        x1, y1, x2, y2 = tight
+    dw = max(1, x2 - x1); dh = max(1, y2 - y1)
+    side = max(dw, dh) * (1.0 + 2.0 * pad_frac)
+    cx = x1 + dw / 2.0; cy = y1 + dh / 2.0
+    return _square_crop_bounds(cx, cy, side, W, H)
+
+def _box_area(b: Tuple[int,int,int,int]) -> int:
+    return max(0, b[2] - b[0]) * max(0, b[3] - b[1])
 
 
 # ======================================================================
@@ -61,7 +125,11 @@ class Args:
     eval_enabled: bool
     gt_disc_root: Optional[Path]
     gt_cup_root: Optional[Path]
-    viz_compare: bool  # <--- NEW FLAG
+    viz_compare: bool
+
+    # NEW: optional second model for cup on ROI + ROI padding
+    cup_weights: Optional[Path]
+    roi_pad_frac: float
 
 
 @dataclass
@@ -85,7 +153,6 @@ def _attach_gt_masks(images: List[Image],
             img.set_mask(Structure.DISC, LabelType.GT, BinaryMaskRef(path=disc_map[stem]))
         if stem in cup_map:
             img.set_mask(Structure.CUP, LabelType.GT, BinaryMaskRef(path=cup_map[stem]))
-        # ensure GT boxes exist if masks are present (helps IoU)
         img.ensure_boxes_from_masks()
 
 def collect_images(args: Args) -> List[Image]:
@@ -101,7 +168,6 @@ def collect_images(args: Args) -> List[Image]:
     coll = DatasetCollector(cfg)  # type: ignore[arg-type]
     ds = coll.collect()
 
-    # Optional patient-wise subset
     if args.subset_n and args.subset_n > 0:
         by = group_by_subject(ds.images)
         keys = list(by.keys())
@@ -143,11 +209,17 @@ def _process_one_image(
     save_viz: bool = True,
     eval_enabled: bool = False,
     viz_compare: bool = False,
+    # NEW: optional cup-on-ROI model + ROI pad
+    cup_yolo_model: Optional[YOLO] = None,
+    roi_pad_frac: float = 0,
+    conf: float = 0.25,
+    iou: float = 0.50,
 ) -> Tuple[
-    Optional[float], Optional[float],  # pred_cd_ratio, gt_cd_ratio
-    Optional[Path], Optional[Path], Optional[Path], Optional[Path],  # disc_mask_path, cup_mask_path, viz_path, viz_compare_path
-    Optional[float], Optional[float],  # disc_box_iou, cup_box_iou
-    Optional[float], Optional[float],  # disc_dice, cup_dice
+    Optional[float], Optional[float],           # pred_cd_ratio, gt_cd_ratio
+    Optional[Path], Optional[Path],             # disc_mask_path, cup_mask_path
+    Optional[Path], Optional[Path],             # viz_path, viz_compare_path
+    Optional[float], Optional[float],           # disc_box_iou, cup_box_iou
+    Optional[float], Optional[float],           # disc_dice, cup_dice
 ]:
     # A) Predict disc bounding box (YOLO)
     disc_box = bb_pred.predict_one_image_to_box(img)
@@ -155,7 +227,7 @@ def _process_one_image(
         return None, None, None, None, None, None, None, None, None, None
 
     img.set_box(Structure.DISC, LabelType.PRED, disc_box)
-    lbl_writer.write(img, require_both=False)
+    lbl_writer.write(img, require_both=False)   # write disc-only first
 
     # Image → embedding
     img_bgr = load_image_bgr(img.image_path)
@@ -170,10 +242,39 @@ def _process_one_image(
     seg_disc_path = out_disc_dir / f"{img.image_path.stem}.png"
     save_mask_png(seg_disc_path, pred_disc_mask)
 
-    # C) Cup box inside disc mask
-    cup_xyxy = build_cup_box_from_disc_mask(pred_disc_mask, dxyxy)
-    if cup_xyxy is None:
-        pred_cd_ratio = cdr_from_masks(pred_disc_mask, None)  # -> None
+    # C1) Cup box from disc mask (fallback / "larger")
+    cup_from_mask_xyxy = build_cup_box_from_disc_mask(pred_disc_mask, dxyxy)
+
+    # C2) Optional: Cup YOLO on disc ROI (candidate that may be smaller)
+    cup_from_det_xyxy: Optional[Tuple[int,int,int,int]] = None
+    if cup_yolo_model is not None:
+        rx0, ry0, rx1, ry1 = _roi_from_disc_mask(pred_disc_mask, dxyxy, pad_frac=roi_pad_frac, W=W, H=H)
+        roi = img_bgr[ry0:ry1, rx0:rx1].copy()
+        det = cup_yolo_model.predict(source=roi, conf=conf, iou=iou, device=msam.device, verbose=False)
+        if det:
+            best = _best_box_from_result(det[0], conf_thres=conf)
+            if best is not None:
+                (cx1, cy1, cx2, cy2), _ = best
+                # map back to global coords
+                cup_from_det_xyxy = (rx0 + cx1, ry0 + cy1, rx0 + cx2, ry0 + cy2)
+
+    # Choose final cup box:
+    # - If detector failed: use cup_from_mask_xyxy (the "larger" default).
+    # - If both exist: use the smaller area of the two (as requested).
+    final_cup_xyxy: Optional[Tuple[int,int,int,int]] = None
+    if cup_from_det_xyxy is None:
+        final_cup_xyxy = cup_from_mask_xyxy
+    else:
+        if cup_from_mask_xyxy is None:
+            final_cup_xyxy = cup_from_det_xyxy
+        else:
+            a_det  = _box_area(cup_from_det_xyxy)
+            a_mask = _box_area(cup_from_mask_xyxy)
+            final_cup_xyxy = cup_from_det_xyxy if a_det < a_mask else cup_from_mask_xyxy
+
+    # If we still don't have a cup prompt, end early (viz w/ disc only)
+    if final_cup_xyxy is None:
+        pred_cd_ratio = cdr_from_masks(pred_disc_mask, None)
         gt_cd_ratio = None
         if eval_enabled and img.gt_disc_mask and img.gt_cup_mask:
             gt_cd_ratio = cdr_from_masks(img.gt_disc_mask.load(), img.gt_cup_mask.load())
@@ -181,9 +282,8 @@ def _process_one_image(
         if viz_path:
             viz = overlay_masks_and_boxes(img_bgr, pred_disc_mask, None, dxyxy, None,
                                           cdr_text=("CDR: N/A" if pred_cd_ratio is None else f"CDR: {pred_cd_ratio:.3f}"))
-            save_viz(viz_path, viz)
+            _save_viz_image(viz_path, viz)
 
-        # Optional side-by-side compare (requires GT)
         viz_compare_path = None
         if viz_compare and eval_enabled and img.gt_disc_mask and img.gt_cup_mask:
             gt_disc = img.gt_disc_mask.load()
@@ -192,19 +292,22 @@ def _process_one_image(
             right_text = f"GT CDR: {(cdr_from_masks(gt_disc, gt_cup) or 0):.3f}"
             comp = make_side_by_side(img_bgr, pred_disc_mask, None, gt_disc, gt_cup, left_text, right_text)
             viz_compare_path = out_viz_compare_dir / f"{img.image_path.stem}_compare.jpg"
-            save_viz(viz_compare_path, comp)
+            _save_viz_image(viz_compare_path, comp)
 
         disc_box_iou = img.disc_iou() if eval_enabled else None
         disc_dice = dice(pred_disc_mask, img.gt_disc_mask.load()) if (eval_enabled and img.gt_disc_mask) else None
         return pred_cd_ratio, gt_cd_ratio, seg_disc_path, None, viz_path, viz_compare_path, disc_box_iou, None, disc_dice, None
 
-    # D) MedSAM cup → mask
-    cup_box = BoundingBox(*map(float, cup_xyxy))
+    # D) MedSAM cup → mask using final cup box
+    cup_box = BoundingBox(*map(float, final_cup_xyxy))
     img.set_box(Structure.CUP, LabelType.PRED, cup_box)
-    pred_cup_mask = medsam_infer(msam, emb, cup_xyxy, H, W)
+    pred_cup_mask = medsam_infer(msam, emb, final_cup_xyxy, H, W)
     img.set_mask(Structure.CUP, LabelType.PRED, BinaryMaskRef(array=pred_cup_mask))
     seg_cup_path = out_cup_dir / f"{img.image_path.stem}.png"
     save_mask_png(seg_cup_path, pred_cup_mask)
+
+    # Re-write labels so both disc and cup are present
+    lbl_writer.write(img, require_both=False)
 
     # E) CDRs
     pred_cd_ratio = cdr_from_masks(pred_disc_mask, pred_cup_mask)
@@ -215,27 +318,26 @@ def _process_one_image(
         gt_cup  = img.gt_cup_mask.load()
         gt_cd_ratio = cdr_from_masks(gt_disc, gt_cup)
 
-    # F) Viz
+    # F) Viz (+ optional side-by-side)
     cdr_text = f"CDR: {pred_cd_ratio:.3f}" if pred_cd_ratio is not None else "CDR: N/A"
-    viz = overlay_masks_and_boxes(img_bgr, pred_disc_mask, pred_cup_mask, dxyxy, cup_xyxy, cdr_text=cdr_text)
+    viz = overlay_masks_and_boxes(img_bgr, pred_disc_mask, pred_cup_mask, dxyxy, final_cup_xyxy, cdr_text=cdr_text)
     viz_path = (out_viz_dir / f"{img.image_path.stem}_viz.jpg") if save_viz else None
     if viz_path:
-        save_viz(viz_path, viz)
+        _save_viz_image(viz_path, viz)
 
-    # F2) Optional side-by-side compare
     viz_compare_path = None
     if viz_compare and eval_enabled and gt_disc is not None and gt_cup is not None:
         left_text  = f"Pred CDR: {pred_cd_ratio:.3f}" if pred_cd_ratio is not None else "Pred CDR: N/A"
         right_text = f"GT CDR: {gt_cd_ratio:.3f}"      if gt_cd_ratio is not None else "GT CDR: N/A"
         comp = make_side_by_side(img_bgr, pred_disc_mask, pred_cup_mask, gt_disc, gt_cup, left_text, right_text)
         viz_compare_path = out_viz_compare_dir / f"{img.image_path.stem}_compare.jpg"
-        save_viz(viz_compare_path, comp)
+        _save_viz_image(viz_compare_path, comp)
 
     # G) Optional mask/box metrics
     disc_box_iou = img.disc_iou() if eval_enabled else None
     cup_box_iou  = img.cup_iou()  if eval_enabled else None
     disc_dice = dice(pred_disc_mask, img.gt_disc_mask.load()) if (eval_enabled and img.gt_disc_mask) else None
-    cup_dice  = dice(pred_cup_mask, img.gt_cup_mask.load())  if (eval_enabled and img.gt_cup_mask)  else None
+    cup_dice  = dice(pred_cup_mask,  img.gt_cup_mask.load())  if (eval_enabled and img.gt_cup_mask)  else None
 
     return pred_cd_ratio, gt_cd_ratio, seg_disc_path, seg_cup_path, viz_path, viz_compare_path, disc_box_iou, cup_box_iou, disc_dice, cup_dice
 
@@ -245,7 +347,7 @@ def _write_summary_csv(rows: List[dict], csv_path: Path) -> None:
     fields = [
         "image_path", "label_path",
         "disc_mask_path", "cup_mask_path",
-        "viz_path", "viz_compare_path",   # <--- NEW COLUMN
+        "viz_path", "viz_compare_path",
         "pred_cd_ratio", "gt_cd_ratio", "cdr_error", "cdr_abs_error", "cdr_ape",
         "disc_box_iou", "cup_box_iou",
         "disc_dice", "cup_dice",
@@ -266,7 +368,7 @@ def _derive_outputs(out_dir: Path) -> tuple[Path, Path, Path, Path, Path, Path]:
     disc   = out_dir / "disc"
     cup    = out_dir / "cup"
     viz    = out_dir / "viz"
-    vizc   = out_dir / "viz_compare"  # <--- NEW DIR
+    vizc   = out_dir / "viz_compare"
     csvp   = out_dir / "summary.csv"
     for p in (labels, disc, cup, viz, vizc, csvp.parent):
         ensure_dir(p)
@@ -292,15 +394,21 @@ class _CLI:
     gt_disc_root: Optional[Path]
     gt_cup_root: Optional[Path]
     viz_compare: bool
+    cup_weights: Optional[Path]
+    roi_pad_frac: float
 
 def _parse_args() -> _CLI:
     ap = argparse.ArgumentParser(
-        description="YOLO bbox → MedSAM disc/cup → CDR (single out dir). Optional comparison to GT."
+        description="YOLO bbox → (optional cup YOLO on ROI) → MedSAM disc/cup → CDR (single out dir)."
     )
     ap.add_argument("--images-root", required=True)
-    ap.add_argument("--weights", required=True)
+    ap.add_argument("--weights", required=True, help="YOLO weights for disc bbox")
     ap.add_argument("--medsam-ckpt", required=True)
     ap.add_argument("--out-dir", required=True)
+
+    # Optional second model for cup on ROI
+    ap.add_argument("--cup-weights", default="", help="Optional YOLO weights for cup detection on disc ROI")
+    ap.add_argument("--roi-pad-frac", type=float, default=0.08, help="Padding fraction for disc ROI crop")
 
     ap.add_argument("--include", nargs="*", default=[])
     ap.add_argument("--exclude", nargs="*", default=[])
@@ -338,6 +446,8 @@ def _parse_args() -> _CLI:
         gt_disc_root=(expand(a.gt_disc_masks) if a.gt_disc_masks else None),
         gt_cup_root=(expand(a.gt_cup_masks) if a.gt_cup_masks else None),
         viz_compare=bool(a.viz_compare),
+        cup_weights=(expand(a.cup_weights) if a.cup_weights else None),
+        roi_pad_frac=float(a.roi_pad_frac),
     )
 
 def main() -> None:
@@ -370,19 +480,26 @@ def main() -> None:
         gt_disc_root=cli.gt_disc_root,
         gt_cup_root=cli.gt_cup_root,
         viz_compare=cli.viz_compare,
+        cup_weights=cli.cup_weights,
+        roi_pad_frac=cli.roi_pad_frac,
     )
 
     images = collect_images(args)
     if not images:
         raise SystemExit("[ERR] No images collected.")
 
+    # Disc predictor + labels
     bb_pred = BoundingBoxPredictor(weights=args.weights, conf=args.conf, iou=args.iou, device=args.device)
     lbl_writer = LabelWriter(args.out_labels, args.images_root, overwrite=args.overwrite)
 
+    # MedSAM
     dev = _pick_device(args.device)
     msam = load_medsam(args.medsam_ckpt, dev, variant="vit_b")
 
-    # Aggregates for evaluation
+    # Optional cup YOLO model (loaded once)
+    cup_yolo_model = YOLO(str(args.cup_weights)) if args.cup_weights else None
+
+    # Aggregates
     disc_iou_vals: List[float] = []
     cup_iou_vals: List[float]  = []
     disc_dice_vals: List[float] = []
@@ -396,7 +513,9 @@ def main() -> None:
          disc_box_iou, cup_box_iou, disc_dice, cup_dice) = _process_one_image(
             img, bb_pred, msam, lbl_writer,
             args.out_disc, args.out_cup, args.out_viz, args.out_viz_compare,
-            save_viz=args.save_viz, eval_enabled=args.eval_enabled, viz_compare=args.viz_compare
+            save_viz=args.save_viz, eval_enabled=args.eval_enabled, viz_compare=args.viz_compare,
+            cup_yolo_model=cup_yolo_model, roi_pad_frac=args.roi_pad_frac,
+            conf=args.conf, iou=args.iou,
         )
 
         rel = img.image_path.resolve().relative_to(args.images_root.resolve())
