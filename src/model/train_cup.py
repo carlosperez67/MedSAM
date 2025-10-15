@@ -40,7 +40,6 @@ class CupROITrainCfg:
     runs_root: Path
     # model selection
     amp: bool = True
-    accumulate: int = 1  # gradient accumulation steps
     freeze: int = 0  # freeze first N layers (0 = none)
     weights: Optional[str] = None    # e.g., /path/best.pt or yolo12x.pt
     family: str = "auto"             # auto|yolo12|yolo11|yolov8
@@ -119,7 +118,6 @@ class CupROITrainer:
             pretrained=c.pretrained,   # use pretrained backbone/heads, fine-tune on single class
             single_cls=True,           # cup-only
             amp = c.amp,
-            accumulate = c.accumulate,
             freeze = c.freeze,
             # train-time augs
             hsv_h=c.hsv_h, hsv_s=c.hsv_s, hsv_v=c.hsv_v,
@@ -152,7 +150,6 @@ def parse_args() -> CupROITrainCfg:
     ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--batch", type=int, default=16)
-    ap.add_argument("--accumulate", type=int, default=1)
     ap.add_argument("--freeze", type=int, default=0)
     ap.add_argument("--amp", type=lambda v: str(v).lower() not in {"0", "false", "no"}, default=True)
     ap.add_argument("--name", default="stageB_cup_roi_modern")
@@ -204,7 +201,7 @@ def parse_args() -> CupROITrainCfg:
         epochs=args.epochs,
         imgsz=args.imgsz,
         batch=args.batch,
-        accumulate=args.accumulate, freeze = args.freeze,
+        freeze = args.freeze,
         amp = bool(args.amp),
         mosaic = args.mosaic,
         name=args.name,
