@@ -6,12 +6,12 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=32G
-#SBATCH --time=7:00:00
-#SBATCH --gpus=1
+#SBATCH --time=6:00:00
+#SBATCH --gpus=4
 #SBATCH --output=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.out
 #SBATCH --error=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.err
 #SBATCH --mail-user=cperez67@student.ubc.ca
-#SBATCH --mail-type=FAIL,END
+#SBATCH --mail-type=START,FAIL,END
 
 set -euo pipefail
 
@@ -95,7 +95,7 @@ srun --kill-on-bad-exit=1 -u python "${PIPELINE}" --config "${CONFIG}"
 run_stageA() {
   echo "[STAGE A] Train disc-only detector using prebuilt disc-only dataset…"
   check_dir  "${DISC_ROOT}" "Prebuilt disc-only root"
-  check_file "${DISC_ROOT}/od_only.yaml" "Disc-only dataset YAML (od_only.yaml)"
+  check_file "${DISC_ROOT}/data.yaml" "Disc-only dataset YAML (od_only.yaml)"
   check_file "${YOLO_WEIGHTS}" "YOLO base weights"
 
   srun --kill-on-bad-exit=1 -u python "${BB_DIR}/train/train_stageA_disc_only.py" \
