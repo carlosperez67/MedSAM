@@ -11,6 +11,8 @@
 #SBATCH --output=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.out
 #SBATCH --error=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.err
 #SBATCH --mail-user=cperez67@student.ubc.ca
+#SBATCH --mail-type=FAIL,END
+
 
 set -euo pipefail
 
@@ -26,7 +28,7 @@ DATA_ROOT="${BB_DIR}/data/yolo_split"            # full YOLO split (not used dir
 ROI_OUT="${BB_DIR}/data/yolo_split_cupROI"       # ROI dataset produced by build_cup_roi_dataset.py
 
 # Local weights (offline-safe)
-WEIGHTS="${BB_DIR}/weights/yolov8n.pt"
+WEIGHTS="${BB_DIR}/weights/yolov12x.pt"
 
 STAGEB_NAME="stageB_cup_roi"
 
