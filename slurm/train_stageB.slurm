@@ -101,7 +101,6 @@ srun -u python "${TRAIN_SCRIPT}" \
   --epochs    100 \
   --imgsz     512 \
   --batch     8 \                # per GPU (global=8*4=32)
-  --accumulate 4 \               # effective global batch ≈ 128
   --optimizer SGD \
   --name      "${EXP_NAME}" \
   --workers   "${SLURM_CPUS_PER_TASK}" \
