@@ -4,11 +4,10 @@
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=24          # ↑ feed dataloader
-#SBATCH --mem=64G                   # ↑ RAM => can raise --workers / cache
+#SBATCH --cpus-per-task=24
+#SBATCH --mem=64G
 #SBATCH --time=4:00:00
-#SBATCH --gpus=4                    # ← request 4 GPUs on one node
-# SBATCH --gres=gpu:4               # (use this line instead of --gpus if your cluster uses --gres)
+#SBATCH --gpus=4
 #SBATCH --output=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.out
 #SBATCH --error=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.err
 #SBATCH --mail-user=cperez67@student.ubc.ca
