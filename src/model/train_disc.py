@@ -46,7 +46,7 @@ from typing import Iterable, List, Optional, Tuple
 import yaml
 from ultralytics import YOLO
 
-from src.model.device_utils import ultralytics_device_arg
+from src.model.utils import ultralytics_device_arg, place, split_has_data, ensure_dir
 
 
 # ============================================================
@@ -78,41 +78,6 @@ class DiscOnlyConfig:
 
     # resume
     resume: Optional[str]             # "", "auto", or path to last.pt
-
-
-def _expand(p: str | Path) -> Path:
-    return Path(os.path.expanduser(str(p))).resolve()
-
-
-def _ensure_dir(p: Path) -> None:
-    p.mkdir(parents=True, exist_ok=True)
-
-
-def _place(src: Path, dst: Path, copy_files: bool) -> None:
-    """Copy or symlink src → dst."""
-    _ensure_dir(dst.parent)
-    if copy_files:
-        shutil.copy2(src, dst)
-    else:
-        if dst.exists() or dst.is_symlink():
-            dst.unlink()
-        dst.symlink_to(src.resolve())
-
-
-def _split_has_data(root: Path, split: str) -> bool:
-    img_dir = root / "images" / split
-    lbl_dir = root / "labels" / split
-    if not (img_dir.exists() and lbl_dir.exists()):
-        return False
-    try:
-        return any(img_dir.iterdir()) and any(lbl_dir.iterdir())
-    except Exception:
-        return False
-
-
-# ============================================================
-# Dataset builder (disc-only)
-# ============================================================
 
 class DiscOnlyDatasetBuilder:
     """Builds (or reuses) a disc-only YOLO dataset and returns (root, data_yaml_path)."""
@@ -147,7 +112,7 @@ class DiscOnlyDatasetBuilder:
     def _filter_labels_dir_to_disc(
         cls, src_lbl_dir: Path, dst_lbl_dir: Path, drop_empty: bool
     ) -> int:
-        _ensure_dir(dst_lbl_dir)
+        ensure_dir(dst_lbl_dir)
         written = 0
         for lbl in sorted(src_lbl_dir.glob("*.txt")):
             lines_in = [ln for ln in lbl.read_text().splitlines()]
@@ -176,7 +141,7 @@ class DiscOnlyDatasetBuilder:
         Returns (dst_root, data_yaml_path)
         """
         dst_root = base_root.parent / f"{base_root.name}_disc_only"
-        _ensure_dir(dst_root)
+        ensure_dir(dst_root)
 
         for split in ("train", "val", "test"):
             src_root = aug_root if (aug_root is not None and split in set(train_splits)) else base_root
@@ -187,7 +152,7 @@ class DiscOnlyDatasetBuilder:
 
             # images
             for img in sorted(src_img_dir.glob("*")):
-                _place(img, dst_root / "images" / split / img.name, copy_images)
+                place(img, dst_root / "images" / split / img.name, copy_images)
 
             # labels -> only disc
             cls._filter_labels_dir_to_disc(src_lbl_dir, dst_root / "labels" / split, drop_empty)
@@ -199,7 +164,7 @@ class DiscOnlyDatasetBuilder:
             "val": "images/val",
             "names": ["disc"],
         }
-        if _split_has_data(dst_root, "test"):
+        if split_has_data(dst_root, "test"):
             data_yaml["test"] = "images/test"
 
         yaml_path = cls.disc_yaml_in(dst_root)
@@ -236,7 +201,7 @@ class YoloTrainer:
             if str(self.cfg.resume).lower() == "auto":
                 last_ckpt = self._find_last_ckpt()
             else:
-                last_ckpt = _expand(self.cfg.resume)
+                last_ckpt = expand(self.cfg.resume)
 
         if last_ckpt and last_ckpt.exists():
             print(f"[INFO] Resuming from: {last_ckpt}")
@@ -385,15 +350,15 @@ def build_config_from_cli() -> DiscOnlyConfig:
 
     args = ap.parse_args()
 
-    project_dir = _expand(args.project_dir)
-    data_root = _expand(args.data_root) if args.data_root else (project_dir / "data" / "yolo_split")
-    aug_root = _expand(args.aug_root) if args.aug_root else None
+    project_dir = expand(args.project_dir)
+    data_root = expand(args.data_root) if args.data_root else (project_dir / "data" / "yolo_split")
+    aug_root = expand(args.aug_root) if args.aug_root else None
     train_splits = _parse_train_splits(args.train_splits)
 
     # defaults
-    model_path = _expand(args.model) if args.model else (project_dir / "weights" / "yolov8n.pt")
-    runs_root = _expand(args.project) if args.project else (project_dir / "bounding_box" / "runs" / "detect")
-    _ensure_dir(runs_root)
+    model_path = expand(args.model) if args.model else (project_dir / "weights" / "yolov8n.pt")
+    runs_root = expand(args.project) if args.project else (project_dir / "bounding_box" / "runs" / "detect")
+    ensure_dir(runs_root)
 
     return DiscOnlyConfig(
         project_dir=project_dir,
