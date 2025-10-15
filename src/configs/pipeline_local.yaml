@@ -41,7 +41,7 @@ augment_out_ext: ".jpg"       # output image format for augmented images
 include_images_without_labels: false
 
 # ---- Disc-only (OD single-class derived) ----
-disc_only_from_aug_train: false    # if true and yolo_aug exists, OD train comes from augmented set
+disc_only_from_aug_train: true    # if true and yolo_aug exists, OD train comes from augmented set
 disc_only_train_splits: ["train"]  # (kept for future; current OOP builder takes whole train)
 disc_only_copy_images: false       # false = symlink
 disc_only_drop_empty: false        # drop items whose labels become empty after filtering to disc-only

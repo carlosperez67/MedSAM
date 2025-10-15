@@ -41,7 +41,7 @@ augment_out_ext: ".jpg"     # output format for augmented images
 include_images_without_labels: false
 
 # ---- Disc-only (OD single-class derived) ----
-disc_only_from_aug_train: false    # match local behavior; set true if you want OD train from augmented
+disc_only_from_aug_train: true    # match local behavior; set true if you want OD train from augmented
 disc_only_train_splits: ["train"]
 disc_only_copy_images: false       # false = symlink
 disc_only_drop_empty: false
