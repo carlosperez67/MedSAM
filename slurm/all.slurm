@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=two-stage
+#SBATCH --job-name=prep-train-disc
 #SBATCH --account=st-ipor-1-gpu
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
@@ -15,88 +15,49 @@
 
 set -euo pipefail
 
-# --- Paths (HPC) ---
-SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"
+# ====================== PATHS / CONFIG ======================
+PROJECT_DIR="/scratch/st-ipor-1/cperez/MedSAM"
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
-PIPELINE="${SCRATCH_DIR}/bounding_box/preprocess/preprocess_pipeline.py"
-CONFIG="${SCRATCH_DIR}/bounding_box/preprocess/preprocess_pipeline_hpc.yaml"
-AUG_YAML="${SCRATCH_DIR}/bounding_box/preprocess/augment_config.yaml"
 
-# Create dirs (fix logs path)
-mkdir -p "$(dirname "${CONFIG}")" \
-         "${SCRATCH_DIR}/bounding_box/data" \
-         "${SCRATCH_DIR}/logs"
+# Preprocess pipeline
+PIPELINE="${PROJECT_DIR}/bounding_box/preprocess/preprocess_pipeline.py"
+CONFIG="${PROJECT_DIR}/bounding_box/preprocess/preprocess_pipeline_hpc.yaml"
+AUG_YAML="${PROJECT_DIR}/bounding_box/preprocess/augment_config.yaml"  # only if your CONFIG references it
 
-# --- Conda env ---
-source "$HOME/miniconda3/etc/profile.d/conda.sh"
-conda activate "$ENV_PREFIX"
+# Training paths
+BB_DIR="${PROJECT_DIR}/bounding_box"
+RUNS_DIR="${PROJECT_DIR}/bounding_box/runs/detect"
 
-# Optional: avoid cache warnings on compute nodes
-export XDG_CACHE_HOME="/scratch/st-ipor-1/cperez/.cache"
+# Data roots produced by preprocess (defaults used by your training scripts)
+DATA_ROOT="${PROJECT_DIR}/data/yolo_split"             # clean split
+AUG_ROOT="${PROJECT_DIR}/data/yolo_split_aug"          # augmented train
+ROI_OUT="${PROJECT_DIR}/data/yolo_split_cupROI"        # ROI crops (if built)
+DISC_ROOT="${PROJECT_DIR}/data/yolo_split_disc_only"   # prebuilt disc-only (from preprocess 'disc_only')
+
+YOLO_WEIGHTS="${BB_DIR}/weights/yolov8n.pt"
+STAGEA_NAME="stageA_disc_only"
+
+# Optional output for later inference
+OUT_JSONL="${PROJECT_DIR}/data/two_stage_boxes.jsonl"
+
+# ====================== PREP ENV & DIRS ======================
+mkdir -p "${PROJECT_DIR}/logs" "${RUNS_DIR}" "${PROJECT_DIR}/data"
+mkdir -p "$(dirname "${CONFIG}")"
+
+# cache/tmp on scratch to avoid home warnings
+export XDG_CACHE_HOME="${PROJECT_DIR}/.cache"
 export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
-export TMPDIR="${SCRATCH_DIR}/tmp"
+export TMPDIR="${PROJECT_DIR}/tmp"
 mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR" "$TMPDIR"
 
-# Threading (avoid oversubscription)
+# CPU threading (avoid oversubscription)
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export NUMEXPR_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export PYTHONUNBUFFERED=1
 
-# --- Sanity checks ---
-if [[ ! -f "$PIPELINE" ]]; then
-  echo "[ERR] Pipeline not found: $PIPELINE" >&2
-  exit 1
-fi
-
-if [[ ! -f "$CONFIG" ]]; then
-  echo "[ERR] Config not found: $CONFIG" >&2
-  exit 1
-fi
-
-# If the config references an external augment YAML, make sure it exists
-if [[ ! -f "$AUG_YAML" ]]; then
-  echo "[WARN] Augment YAML not found at $AUG_YAML"
-  echo "       If your CONFIG expects this file (aug_yaml: ...), create it first."
-fi
-
-# --- Run the full preprocessing pipeline via YAML config ---
-echo "[INFO] Using config: ${CONFIG}"
-srun -u python "${PIPELINE}" --config "${CONFIG}"
-
-# --------------------------- Paths (HPC) ---------------------------
-PROJECT_DIR="/scratch/st-ipor-1/cperez/MedSAM"
-ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
-
-
-BB_DIR="${PROJECT_DIR}/bounding_box"
-RUNS_DIR="${PROJECT_DIR}/runs/detect"
-
-# Clean split, augmented split, and prebuilt ROI split (from preprocess step)
-DATA_ROOT="${PROJECT_DIR}/data/yolo_split"       # clean (val/test)
-AUG_ROOT="${PROJECT_DIR}/data/yolo_split_aug"    # augmented (train)
-ROI_OUT="${PROJECT_DIR}/data/yolo_split_cupROI"  # prebuilt (used by Stage B)
-# Prebuilt disc-only dataset (built by preprocess 'disc_only' stage)
-DISC_ROOT="${PROJECT_DIR}/data/yolo_split_disc_only"
-
-# Optional output for two-stage inference
-OUT_JSONL="${PROJECT_DIR}/data/two_stage_boxes.jsonl"
-
-# Experiment names (match script defaults)
-STAGEA_NAME="stageA_disc_only"
-
-
-# Optional: avoid cache warnings on compute nodes
-export XDG_CACHE_HOME="/scratch/st-ipor-1/cperez/.cache"
-export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
-export TMPDIR="${PROJECT_DIR}/tmp"
-mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR" "$TMPDIR"
-
-mkdir -p "${PROJECT_DIR}/logs" "${RUNS_DIR}" "${PROJECT_DIR}/data"
-cd "${PROJECT_DIR}"
-
-# --------------------------- Env -----------------------------------
+# Conda env
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate "$ENV_PREFIX"
 
@@ -113,38 +74,40 @@ print(f"[ENV] torch {torch.__version__} | cuda={torch.cuda.is_available()} | gpu
 print(f"[ENV] ultralytics {ultralytics.__version__}")
 PY
 
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
-export PYTHONUNBUFFERED=1
-export XDG_CACHE_HOME="${PROJECT_DIR}/.cache"
-export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
-mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR"
-
-
-
-# --------------------------- Helpers -------------------------------
+# ====================== SANITY CHECKS ======================
 die() { echo "[ERROR] $*" >&2; exit 1; }
 check_file() { [[ -f "$1" ]] || die "$2 not found: $1"; }
 check_dir()  { [[ -d "$1" ]] || die "$2 not found: $1"; }
 
-# --------------------------- Stage A -------------------------------
-run_stageA() {
-  echo "[STAGE A] Train disc-only detector using PREBUILT disc-only dataset…"
-  check_dir  "${DISC_ROOT}" "Prebuilt disc-only root"
-  check_file "${DISC_ROOT}/data.yaml" "Disc-only YAML (od_only.yaml)"
+check_file "${PIPELINE}" "Preprocess pipeline"
+check_file "${CONFIG}"   "Pipeline config"
+if [[ -f "${AUG_YAML}" ]]; then
+  echo "[INFO] Found augment YAML: ${AUG_YAML}"
+else
+  echo "[WARN] Augment YAML not found at ${AUG_YAML} (only needed if CONFIG references it)."
+fi
 
-  # Minimal CLI: just point --data_root at the disc-only root; no --aug_root needed.
-  python "${BB_DIR}/train/train_stageA_disc_only.py" \
+# ====================== RUN PREPROCESS ======================
+echo "[INFO] Running preprocess with config: ${CONFIG}"
+srun --kill-on-bad-exit=1 -u python "${PIPELINE}" --config "${CONFIG}"
+
+# ====================== TRAIN STAGE A (DISC-ONLY) ======================
+run_stageA() {
+  echo "[STAGE A] Train disc-only detector using prebuilt disc-only dataset…"
+  check_dir  "${DISC_ROOT}" "Prebuilt disc-only root"
+  check_file "${DISC_ROOT}/od_only.yaml" "Disc-only dataset YAML (od_only.yaml)"
+  check_file "${YOLO_WEIGHTS}" "YOLO base weights"
+
+  srun --kill-on-bad-exit=1 -u python "${BB_DIR}/train/train_stageA_disc_only.py" \
     --project_dir "${PROJECT_DIR}" \
     --data_root   "${DISC_ROOT}" \
-    --model       "${BB_DIR}/weights/yolov8n.pt"
+    --model       "${YOLO_WEIGHTS}"
 
   local best="${RUNS_DIR}/${STAGEA_NAME}/weights/best.pt"
   check_file "${best}" "Stage A best checkpoint"
   echo "[STAGE A] Best checkpoint: ${best}"
 }
 
-
-# --------------------------- Run -----------------------------------
 run_stageA
 
-echo "[DONE] ]training completed at $(date)"
+echo "[DONE] Training completed at $(date)"
