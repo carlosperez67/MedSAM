@@ -43,6 +43,11 @@ export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
 export TMPDIR="${SCRATCH_DIR}/tmp"
 mkdir -p "$XDG_CACHE_HOME" "$MPLCONFIGDIR" "$TMPDIR"
 
+# Put Ultralytics config/DDP files on scratch (not $HOME)
+export XDG_CONFIG_HOME="${SCRATCH_DIR}/.config"
+export ULTRALYTICS_CONFIG_DIR="${XDG_CONFIG_HOME}/Ultralytics"   # extra safety, even if not required
+mkdir -p "${ULTRALYTICS_CONFIG_DIR}/DDP"
+
 # Threading
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
