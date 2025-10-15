@@ -1,15 +1,17 @@
 #!/bin/bash
-#SBATCH --job-name=preprocess_mutli_ds
-#SBATCH --account=st-ipor-1
+#SBATCH --job-name=two-stage
+#SBATCH --account=st-ipor-1-gpu
+#SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
-#SBATCH --mem=16G
-#SBATCH --time=04:00:00
+#SBATCH --mem=32G
+#SBATCH --time=7:00:00
+#SBATCH --gpus=1
 #SBATCH --output=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.out
 #SBATCH --error=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.err
 #SBATCH --mail-user=cperez67@student.ubc.ca
-# SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL,END
 
 set -euo pipefail
 
@@ -62,7 +64,6 @@ fi
 # --- Run the full preprocessing pipeline via YAML config ---
 echo "[INFO] Using config: ${CONFIG}"
 srun -u python "${PIPELINE}" --config "${CONFIG}"
-
 
 # --------------------------- Paths (HPC) ---------------------------
 PROJECT_DIR="/scratch/st-ipor-1/cperez/MedSAM"
