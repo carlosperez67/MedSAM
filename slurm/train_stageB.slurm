@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH --time=4:00:00
 #SBATCH --gpus=4
 #SBATCH --output=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.out
@@ -84,9 +84,6 @@ PY
 
 echo "[INFO] Using devices: $DEVICES"
 
-# Train: scale batch/workers with more GPU/CPU
-#   - Increase --batch (try 64–128 on 4× GPUs)
-#   - Increase --workers to feed GPUs (use cpus-per-task)
 srun -u python "${TRAIN_SCRIPT}" \
   --data-root "${ROI_ROOT}" \
   --runs-root "${RUNS_DIR}" \

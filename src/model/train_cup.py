@@ -112,6 +112,7 @@ class CupROITrainer:
             seed=c.seed,
             optimizer=c.optimizer,
             cos_lr=c.cos_lr,
+            amp=c.amp,
             patience=c.patience,
             pretrained=c.pretrained,   # use pretrained backbone/heads, fine-tune on single class
             single_cls=True,           # cup-only
