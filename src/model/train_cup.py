@@ -42,10 +42,9 @@ class CupROITrainCfg:
     amp: bool = True
     accumulate: int = 1  # gradient accumulation steps
     freeze: int = 0  # freeze first N layers (0 = none)
-    recompute: bool = False  # if your Ultralytics build supports gradient checkpointing
     weights: Optional[str] = None    # e.g., /path/best.pt or yolo12x.pt
     family: str = "auto"             # auto|yolo12|yolo11|yolov8
-    size: str = "x"                  # n|s|m|l|x
+    size: str = "l"                  # n|s|m|l|x
 
     # training knobs
     epochs: int = 100
@@ -122,7 +121,6 @@ class CupROITrainer:
             amp = c.amp,
             accumulate = c.accumulate,
             freeze = c.freeze,
-            recompute = c.recompute,
             # train-time augs
             hsv_h=c.hsv_h, hsv_s=c.hsv_s, hsv_v=c.hsv_v,
             degrees=c.degrees, translate=c.translate, scale=c.scale,
@@ -156,7 +154,6 @@ def parse_args() -> CupROITrainCfg:
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--accumulate", type=int, default=1)
     ap.add_argument("--freeze", type=int, default=0)
-    ap.add_argument("--recompute", action="store_true")
     ap.add_argument("--amp", type=lambda v: str(v).lower() not in {"0", "false", "no"}, default=True)
     ap.add_argument("--name", default="stageB_cup_roi_modern")
     ap.add_argument("--workers", type=int, default=8)
@@ -208,7 +205,7 @@ def parse_args() -> CupROITrainCfg:
         imgsz=args.imgsz,
         batch=args.batch,
         accumulate=args.accumulate, freeze = args.freeze,
-        recompute = bool(args.recompute), amp = bool(args.amp),
+        amp = bool(args.amp),
         mosaic = args.mosaic,
         name=args.name,
         workers=args.workers,

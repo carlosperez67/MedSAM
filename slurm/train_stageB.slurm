@@ -61,6 +61,14 @@ export NCCL_IB_DISABLE=1
 export NCCL_P2P_DISABLE=0
 export NCCL_DEBUG=warn
 
+# allocator & offline
+# export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:64
+export WANDB_DISABLED=true
+export HF_HUB_OFFLINE=1
+export HF_HUB_DISABLE_TELEMETRY=1
+export ULTRALYTICS_HUB=False
+export ULTRALYTICS_ANALYTICS=False
+
 echo "GPUs requested: ${SLURM_GPUS:-unknown}"
 nvidia-smi -L || true
 
@@ -91,8 +99,10 @@ srun -u python "${TRAIN_SCRIPT}" \
   --family    auto \
   --size      x \
   --epochs    100 \
-  --imgsz     640 \
-  --batch     128 \
+  --imgsz     512 \
+  --batch     8 \                # per GPU (global=8*4=32)
+  --accumulate 4 \               # effective global batch ≈ 128
+  --optimizer SGD \
   --name      "${EXP_NAME}" \
   --workers   "${SLURM_CPUS_PER_TASK}" \
   --device    "${DEVICES}"
