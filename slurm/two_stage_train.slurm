@@ -37,7 +37,6 @@ OUT_JSONL="${PROJECT_DIR}/data/two_stage_boxes.jsonl"
 
 # Experiment names (match script defaults)
 STAGEA_NAME="stageA_disc_only"
-STAGEB_NAME="stageB_cup_roi"
 
 
 # Optional: avoid cache warnings on compute nodes
@@ -96,48 +95,8 @@ run_stageA() {
   echo "[STAGE A] Best checkpoint: ${best}"
 }
 
-# --------------------------- Stage B -------------------------------
-run_stageB() {
-  echo "[STAGE B] Train cup-only detector on prebuilt ROI dataset…"
-  check_dir "${ROI_OUT}" "ROI dataset"
-
-  # Explicitly pass project_dir so defaults resolve to BB_DIR/{data,runs,weights}
-  # No other flags needed if you’re happy with defaults.
-  python "${BB_DIR}/train/train_stageB_cup_roi.py" \
-    --project_dir "${PROJECT_DIR}"
-
-  local best="${RUNS_DIR}/${STAGEB_NAME}/weights/best.pt"
-  check_file "${best}" "Stage B best checkpoint"
-  echo "[STAGE B] Best checkpoint: ${best}"
-}
-
-# --------------------------- Inference (optional) ------------------
-run_infer_optional() {
-  local test_images="${DATA_ROOT}/images/test"
-  if [[ -d "${test_images}" ]]; then
-    echo "[INFER] Two-stage inference on clean test images…"
-    local bestA="${RUNS_DIR}/${STAGEA_NAME}/weights/best.pt"
-    local bestB="${RUNS_DIR}/${STAGEB_NAME}/weights/best.pt"
-    check_file "${bestA}" "Stage A best checkpoint"
-    check_file "${bestB}" "Stage B best checkpoint"
-
-    python "${BB_DIR}/train/infer_two_stage_to_boxes.py" \
-      --stageA "${bestA}" \
-      --stageB "${bestB}" \
-      --images "${test_images}" \
-      --out_jsonl "${OUT_JSONL}" \
-      --od_pad_pct 0.08 \
-      --confA 0.25 \
-      --confB 0.10
-    echo "[INFER] Wrote: ${OUT_JSONL}"
-  else
-    echo "[WARN] No clean test split at ${test_images}; skipping inference."
-  fi
-}
 
 # --------------------------- Run -----------------------------------
 run_stageA
-# run_stageB
-# run_infer_optional
 
-echo "[DONE] Two-stage training completed at $(date)"
+echo "[DONE] ]training completed at $(date)"
