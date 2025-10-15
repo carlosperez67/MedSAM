@@ -90,7 +90,7 @@ def _split_has_data(root: Path, split: str) -> bool:
 
 def _disc_yaml_in(root: Path) -> Path:
     """Return the expected disc-only YAML path inside a dataset root."""
-    return root / "od_only.yaml"
+    return root / "data.yaml"
 
 def _has_precomputed_disc_only(root: Path) -> bool:
     """True if root looks like a disc-only dataset (has od_only.yaml)."""
