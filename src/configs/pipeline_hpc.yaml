@@ -34,7 +34,7 @@ patient_regex: ""           # optional regex with ONE capturing group for patien
 
 # ---- Augment (OOP Augmentor) ----
 augment_enabled: true
-aug_yaml: "./configs/augment.yaml"
+# aug_yaml: "./configs/augment.yaml"
 augment_splits: ["train"]   # augment only the train split
 augment_multiplier: 2       # N augmented versions per original
 augment_out_ext: ".jpg"     # output format for augmented images
