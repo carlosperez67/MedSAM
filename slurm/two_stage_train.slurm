@@ -23,17 +23,17 @@ ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
 
 
 BB_DIR="${PROJECT_DIR}/bounding_box"
-RUNS_DIR="${BB_DIR}/runs/detect"
+RUNS_DIR="${PROJECT_DIR}/runs/detect"
 
 # Clean split, augmented split, and prebuilt ROI split (from preprocess step)
-DATA_ROOT="${BB_DIR}/data/yolo_split"       # clean (val/test)
-AUG_ROOT="${BB_DIR}/data/yolo_split_aug"    # augmented (train)
-ROI_OUT="${BB_DIR}/data/yolo_split_cupROI"  # prebuilt (used by Stage B)
+DATA_ROOT="${PROJECT_DIR}/data/yolo_split"       # clean (val/test)
+AUG_ROOT="${PROJECT_DIR}/data/yolo_split_aug"    # augmented (train)
+ROI_OUT="${PROJECT_DIR}/data/yolo_split_cupROI"  # prebuilt (used by Stage B)
 # Prebuilt disc-only dataset (built by preprocess 'disc_only' stage)
-DISC_ROOT="${BB_DIR}/data/yolo_split_disc_only"
+DISC_ROOT="${PROJECT_DIR}/data/yolo_split_disc_only"
 
 # Optional output for two-stage inference
-OUT_JSONL="${BB_DIR}/data/two_stage_boxes.jsonl"
+OUT_JSONL="${PROJECT_DIR}/data/two_stage_boxes.jsonl"
 
 # Experiment names (match script defaults)
 STAGEA_NAME="stageA_disc_only"
@@ -136,8 +136,8 @@ run_infer_optional() {
 }
 
 # --------------------------- Run -----------------------------------
-# run_stageA
-run_stageB
+run_stageA
+# run_stageB
 # run_infer_optional
 
 echo "[DONE] Two-stage training completed at $(date)"
