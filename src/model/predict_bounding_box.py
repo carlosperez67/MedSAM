@@ -38,7 +38,7 @@ from ultralytics import YOLO
 # --- Your package imports ---
 from src.imgpipe.config import PipelineConfig
 from src.imgpipe.collector import DatasetCollector
-from src.imgpipe.utils import ensure_dir
+from src.utils import ensure_dir
 
 # OOP classes used by the new API
 from src.imgpipe.image import Image as ImageRec

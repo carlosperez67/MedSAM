@@ -17,14 +17,14 @@ from src.imgpipe.enums import LabelType, Structure
 from src.imgpipe.image import Image
 from src.imgpipe.bounding_box import BoundingBox
 from src.imgpipe.collector import DatasetCollector, group_by_subject
-from src.imgpipe.utils import ensure_dir, stem_map_by_first_match
+from src.utils import ensure_dir, stem_map_by_first_match
 from src.model.MedSAM_infer import (
     MedSAMModel, medsam_infer, _embed_image_1024, load_medsam, _pick_device
 )
 
 # NOTE: adjust this import path if needed
 from src.model.predict_bounding_box import BoundingBoxPredictor, LabelWriter
-from src.model.utils import (
+from src.utils import (
     overlay_masks_and_boxes, cdr_from_masks, make_side_by_side, load_image_bgr,
     shrink_box_to_fit_mask, tight_bbox_from_mask, save_mask_png, expand, dice
 )

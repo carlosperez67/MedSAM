@@ -5,7 +5,7 @@ from typing import Optional
 
 import numpy as np
 
-from .utils import (
+from src.utils import (
     ensure_bool_mask,
     xc_yc_wh_to_xyxy,
     xyxy_to_xc_yc_wh,

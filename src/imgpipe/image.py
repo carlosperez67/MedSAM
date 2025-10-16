@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, Optional
 from .binary_mask_ref import BinaryMaskRef
 from .bounding_box import BoundingBox
 from .enums import LabelType, Structure
-from .utils import gen_uid, read_image_size
+from src.utils import gen_uid, read_image_size
 
 
 @dataclass

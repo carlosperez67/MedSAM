@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -11,26 +10,8 @@ from typing import Optional
 import yaml
 from ultralytics import YOLO
 
-# --- tiny utils ---
-def _expand(p: str | Path) -> Path:
-    return Path(os.path.expanduser(str(p))).resolve()
+from src.utils import ensure_dir, need
 
-def _ensure_dir(p: Path) -> None:
-    p.mkdir(parents=True, exist_ok=True)
-
-def _need(p: Path, what: str) -> None:
-    if not p.exists():
-        raise SystemExit(f"[ERR] {what} not found: {p}")
-
-def _auto_device() -> str:
-    # returns "0" if CUDA visible else "cpu" (simple heuristic)
-    import torch
-    if torch.cuda.is_available(): return "0"
-    try:
-        if torch.backends.mps.is_available(): return "mps"  # mac
-    except Exception:
-        pass
-    return "cpu"
 
 # --- config ---
 @dataclass
@@ -80,16 +61,16 @@ class CupROITrainer:
     def __init__(self, cfg: CupROITrainCfg):
         self.cfg = cfg
         self.yaml_path = cfg.data_root / "data.yaml"
-        _need(cfg.data_root, "ROI dataset root")
-        _need(self.yaml_path, "data.yaml")
-        _ensure_dir(cfg.runs_root)
+        need(cfg.data_root, "ROI dataset root")
+        need(self.yaml_path, "data.yaml")
+        ensure_dir(cfg.runs_root)
         self.device = cfg.device or _auto_device()
         self.model = YOLO(self._resolve_weights())
 
     # prefer newest, biggest model by name
     def _resolve_weights(self) -> str:
         if self.cfg.weights:
-            return str(_expand(self.cfg.weights))
+            return str(expand(self.cfg.weights))
         fam = (self.cfg.family or "auto").lower()
         size = (self.cfg.size or "x").lower()
         # attempt order by recency -> stability
@@ -185,12 +166,12 @@ def parse_args() -> CupROITrainCfg:
     default_data = project / "bounding_box" / "data" / "yolo_split_cupROI"
     default_runs = project / "bounding_box" / "runs" / "detect"
 
-    data_root = _expand(args.data_root) if args.data_root else default_data
-    runs_root = _expand(args.runs_root) if args.runs_root else default_runs
+    data_root = expand(args.data_root) if args.data_root else default_data
+    runs_root = expand(args.runs_root) if args.runs_root else default_runs
 
-    _need(data_root, "ROI dataset root")
-    _need(data_root / "data.yaml", "data.yaml")
-    _ensure_dir(runs_root)
+    need(data_root, "ROI dataset root")
+    need(data_root / "data.yaml", "data.yaml")
+    ensure_dir(runs_root)
 
     return CupROITrainCfg(
         data_root=data_root,

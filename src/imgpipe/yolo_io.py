@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 from .image import Image
-from .utils import ensure_dir, safe_link_or_copy
+from src.utils import ensure_dir, safe_link_or_copy
 
 
 class YoloDatasetIO:

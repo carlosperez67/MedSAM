@@ -4,7 +4,7 @@ import uuid
 import numpy as np
 import pytest
 
-from src.imgpipe.utils import (
+from src.utils import (
     gen_uid,
     ensure_bool_mask,
     xyxy_to_xc_yc_wh,

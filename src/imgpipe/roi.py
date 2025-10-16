@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 
 from PIL import Image as PILImage
 
-from .utils import ensure_dir
+from src.utils import ensure_dir
 from .yolo_io import YoloDatasetIO
 
 

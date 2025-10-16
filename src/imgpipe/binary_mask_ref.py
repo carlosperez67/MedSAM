@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from .utils import ensure_bool_mask
+from src.utils import ensure_bool_mask
 from PIL import Image  # type: ignore
 import imageio.v3 as iio  # type: ignore
 import cv2  # type: ignore

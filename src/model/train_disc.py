@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
@@ -34,7 +33,7 @@ from typing import Iterable, List, Optional, Tuple
 import yaml
 from ultralytics import YOLO
 
-from src.model.utils import ultralytics_device_arg, place, split_has_data, ensure_dir
+from src.utils import ultralytics_device_arg, place, split_has_data, ensure_dir
 
 # ------------------------------
 # tiny local utils

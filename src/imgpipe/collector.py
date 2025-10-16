@@ -9,7 +9,7 @@ from .config import PipelineConfig
 from .image import Image
 from .image_factory import ImageFactory
 from .dataset import Dataset
-from .utils import (
+from src.utils import (
     ensure_dir,
 )
 

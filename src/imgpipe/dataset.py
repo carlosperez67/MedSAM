@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .image import Image
-from .utils import ensure_dir
+from src.utils import ensure_dir
 from .yolo_io import YoloDatasetIO
 
 

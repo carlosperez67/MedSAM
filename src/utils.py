@@ -1,10 +1,11 @@
-# device_utils.py
+# src.device_utils.py
 
 # device_utils.py
 from __future__ import annotations
 
 import argparse
 import csv
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +16,11 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from skimage import io as skio, transform as sktf
+from torch.accelerator import is_available, device_count
 
+def need(p: Path, what: str) -> None:
+    if not p.exists():
+        raise SystemExit(f"[ERR] {what} not found: {p}")
 
 def ultralytics_device_arg() -> str:
     """
@@ -29,7 +34,7 @@ def ultralytics_device_arg() -> str:
         return env  # Ultralytics treats "0,1" as multi-GPU (DDP)
     # simple fallback
     if is_available() and device_count() > 0:
-        return "0"
+        return "mps"
     return "cpu"
 
 # ======================================================================
@@ -181,3 +186,83 @@ def split_has_data(root: Path, split: str) -> bool:
         return any(img_dir.iterdir()) and any(lbl_dir.iterdir())
     except Exception:
         return False
+
+IMG_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")
+
+def ensure_parent(p: Path) -> None:
+    ensure_dir(p.parent)
+
+
+def safe_link_or_copy(src: Path, dst: Path, prefer_copy: bool = False) -> None:
+    """Symlink if allowed; otherwise copy. Overwrites existing."""
+    ensure_parent(dst)
+    if dst.exists() or dst.is_symlink():
+        dst.unlink()
+    if prefer_copy:
+        shutil.copy2(src, dst)
+        return
+    try:
+        dst.symlink_to(src.resolve())
+    except Exception:
+        shutil.copy2(src, dst)
+
+
+def list_files_with_ext(root: Path, exts: Iterable[str] = IMG_EXTS, recursive: bool = True) -> List[Path]:
+    exts = tuple(e.lower() for e in exts)
+    if recursive:
+        return sorted([p for p in root.rglob("*") if p.suffix.lower() in exts])
+    return sorted([p for p in root.iterdir() if p.suffix.lower() in exts])
+
+
+def stem_map_by_first_match(root: Path, exts: Iterable[str] = IMG_EXTS) -> Dict[str, Path]:
+    """Map file stem → first matching path under root (recursive)."""
+    out: Dict[str, Path] = {}
+    for p in list_files_with_ext(root, exts, recursive=True):
+        out.setdefault(p.stem, p)
+    return out
+
+def gen_uid(n: int = 12) -> str:
+    return uuid.uuid4().hex[:n]
+
+
+def read_image_size(img_path: Path) -> Tuple[int, int]:
+    """Return (width, height) without fully decoding if possible."""
+    try:
+        from PIL import Image  # type: ignore
+        with Image.open(img_path) as im:
+            return im.size  # (W, H)
+    except Exception:
+        pass
+    try:
+        import cv2  # type: ignore
+        im = cv2.imread(str(img_path), cv2.IMREAD_UNCHANGED)
+        if im is None:
+            raise ValueError("cv2.imread returned None")
+        h, w = im.shape[:2]
+        return w, h
+    except Exception:
+        pass
+    try:
+        import imageio.v3 as iio  # type: ignore
+        im = iio.imread(str(img_path))
+        h, w = im.shape[:2]
+        return w, h
+    except Exception as e:
+        raise RuntimeError(f"Unable to read image size for {img_path}: {e}") from e
+
+def ensure_bool_mask(arr: np.ndarray) -> np.ndarray:
+    return arr.astype(bool, copy=False)
+
+def xyxy_to_xc_yc_wh(x1: float, y1: float, x2: float, y2: float):
+    w = max(0.0, x2 - x1)
+    h = max(0.0, y2 - y1)
+    xc = x1 + w / 2.0
+    yc = y1 + h / 2.0
+    return xc, yc, w, h
+
+def xc_yc_wh_to_xyxy(xc: float, yc: float, w: float, h: float):
+    x1 = xc - w / 2.0
+    y1 = yc - h / 2.0
+    x2 = xc + w / 2.0
+    y2 = yc + h / 2.0
+    return x1, y1, x2, y2

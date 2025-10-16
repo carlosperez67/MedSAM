@@ -105,7 +105,8 @@ ARGS=(
 # dos2unix "${TRAIN_SCRIPT}" 2>/dev/null || true
 
 # Train
-srun -u python "${TRAIN_SCRIPT}" "${ARGS[@]}"
+cd /scratch/st-ipor-1/cperez/MedSAM
+srun -u python -m src.model.train_cup "${ARGS[@]}"
 
 BEST="${RUNS_DIR}/${EXP_NAME}/weights/best.pt"
 [[ -f "${BEST}" ]] || { echo "[ERR] best.pt not found at ${BEST}" >&2; exit 3; }

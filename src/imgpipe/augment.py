@@ -60,7 +60,7 @@ import cv2
 import numpy as np
 import yaml
 
-from .utils import ensure_dir
+from src.utils import ensure_dir
 
 
 # ----------------------------- small I/O helpers -----------------------------

@@ -7,7 +7,7 @@ from typing import Iterable, List, Optional, Dict
 import numpy as np
 from PIL import Image as PILImage
 
-from .utils import stem_map_by_first_match, list_files_with_ext
+from src.utils import stem_map_by_first_match, list_files_with_ext
 from .enums import LabelType, Structure
 from .bounding_box import BoundingBox
 from .image import Image
