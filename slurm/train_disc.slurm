@@ -106,7 +106,7 @@ ARGS=(
 )
 
 # -------- Train --------
-srun -u python "${TRAIN_SCRIPT}" "${ARGS[@]}"
+srun -u python -m src.model.train_disc "${ARGS[@]}"
 
 BEST="${RUNS_DIR}/${EXP_NAME}/weights/best.pt"
 [[ -f "${BEST}" ]] || { echo "[ERR] best.pt not found at ${BEST}" >&2; exit 3; }

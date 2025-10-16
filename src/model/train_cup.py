@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# train_stageB_cup_roi_modern.py
+# train_cup.py
 from __future__ import annotations
 
 import argparse
