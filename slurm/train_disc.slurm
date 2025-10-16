@@ -14,21 +14,14 @@
 #SBATCH --mail-type=FAIL,END
 
 set -euo pipefail
-set -x  # echo commands for debugging
+set -x
 
 # -------- Paths --------
-SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"
+SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"      # project root (contains src/)
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
 
-BB_DIR="${SCRATCH_DIR}/bounding_box"
-TRAIN_SCRIPT="${SCRATCH_DIR}/src/model/train_disc.py"
-# 2-class YOLO split (images/{train,val,test}, labels/{...})
-DATA_ROOT="${BB_DIR}/data/yolo_split"
-
-# Local (offline) weights
-WEIGHTS_LOCAL="${BB_DIR}/weights/yolo12x.pt"  # <- already copied to HPC
-
-# Ultralytics runs live under project_dir/bounding_box/runs/detect by default
+DATA_ROOT="${SCRATCH_DIR}/bounding_box/data/yolo_split"   # 2-class dataset root
+WEIGHTS_LOCAL="${SCRATCH_DIR}/bounding_box/weights/yolo12x.pt"
 RUNS_DIR="${SCRATCH_DIR}/bounding_box/runs/detect"
 EXP_NAME="stageA_disc_y12x"
 
@@ -45,7 +38,7 @@ export HF_HUB_DISABLE_TELEMETRY=1
 export ULTRALYTICS_HUB=False
 export ULTRALYTICS_ANALYTICS=False
 
-# Put Ultralytics config/DDP files on scratch (not $HOME)
+# -------- Cache & config (on scratch, not $HOME) --------
 export XDG_CACHE_HOME="${SCRATCH_DIR}/.cache"
 export XDG_CONFIG_HOME="${SCRATCH_DIR}/.config"
 export ULTRALYTICS_CONFIG_DIR="${XDG_CONFIG_HOME}/Ultralytics"
@@ -53,7 +46,7 @@ export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
 export TMPDIR="${SCRATCH_DIR}/tmp"
 mkdir -p "$XDG_CACHE_HOME" "$ULTRALYTICS_CONFIG_DIR/DDP" "$MPLCONFIGDIR" "$TMPDIR"
 
-# -------- Threads & CUDA allocator --------
+# -------- Threads & allocator --------
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
@@ -66,7 +59,10 @@ export NCCL_IB_DISABLE=1
 export NCCL_P2P_DISABLE=0
 export NCCL_DEBUG=warn
 
-# Make all requested GPUs visible; Ultralytics will spawn DDP across them
+# -------- Make project importable --------
+export PYTHONPATH="${SCRATCH_DIR}:${PYTHONPATH:-}"
+
+# -------- Choose GPUs by visibility; Ultralytics will DDP across them --------
 CUDA_LIST=$(python - <<'PY'
 import os
 n = int(os.environ.get("SLURM_GPUS", "1"))
@@ -79,34 +75,44 @@ echo "GPUs requested: ${SLURM_GPUS:-unknown}"
 nvidia-smi -L || true
 
 # -------- Sanity checks --------
-[[ -f "${TRAIN_SCRIPT}" ]] || { echo "[ERR] Trainer not found: ${TRAIN_SCRIPT}" >&2; exit 2; }
-[[ -d "${DATA_ROOT}/images" && -d "${DATA_ROOT}/labels" ]] || { echo "[ERR] Bad DATA_ROOT (needs images/ and labels/): ${DATA_ROOT}" >&2; exit 2; }
-[[ -f "${WEIGHTS_LOCAL}" ]] || { echo "[ERR] Local weights not found: ${WEIGHTS_LOCAL}" >&2; exit 2; }
+[[ -d "${DATA_ROOT}/images" && -d "${DATA_ROOT}/labels" ]] || { echo "[ERR] Bad DATA_ROOT: ${DATA_ROOT}" >&2; exit 2; }
+[[ -f "${WEIGHTS_LOCAL}" ]] || { echo "[ERR] Weights not found: ${WEIGHTS_LOCAL}" >&2; exit 2; }
+[[ -d "${SCRATCH_DIR}/src" ]] || { echo "[ERR] No src/ under ${SCRATCH_DIR}" >&2; exit 2; }
 
-# -------- Show CLI (first lines) --------
-python "${TRAIN_SCRIPT}" --help | sed -n '1,50p'
+# Optional: preflight import
+python - <<'PY'
+import sys, os
+print("[PYTHONPATH]", os.environ.get("PYTHONPATH"))
+import src, importlib
+print("[CHECK] Imported 'src' OK from:", src.__file__)
+importlib.import_module("src.model.train_disc")
+print("[CHECK] Imported 'src.model.train_disc' OK")
+PY
 
-# -------- Build args safely --------
+# -------- Train (run as module from project root) --------
+cd "${SCRATCH_DIR}"
+
 ARGS=(
-  --project_dir "${SCRATCH_DIR}"      # makes runs at ${SCRATCH_DIR}/bounding_box/runs/detect
-  --data_root   "${DATA_ROOT}"        # 2-class root; script will derive _disc_only/
-  --weights     "${WEIGHTS_LOCAL}"    # local YOLOv12X file (offline)
+  --project_dir "${SCRATCH_DIR}"
+  --data_root   "${DATA_ROOT}"       # script will build <root>_disc_only/
+  --weights     "${WEIGHTS_LOCAL}"   # local yolo12x.pt (offline)
   --family      auto
   --size        x
   --epochs      100
   --imgsz       640
-  --batch       16                    # adjust if OOM; 12x is heavy
+  --batch       16                   # lower if OOM
   --name        "${EXP_NAME}"
   --train       1
-  --freeze      5                    # optional: freeze some early layers
-  --amp         true                  # AMP on (good on V100)
-  # Building toggles if you need them:
-  # --copy_images                      # default is symlink
-  # --drop_empty                       # drop empty labels after filtering
+  --freeze      5                    # optional
+  --amp         true
+  # --copy_images                       # optional build switch
+  # --drop_empty                        # optional build switch
 )
 
-# -------- Train --------
-cd /scratch/st-ipor-1/cperez/MedSAM
+# Show CLI header
+python -m src.model.train_disc --help | sed -n '1,60p'
+
+# Launch
 srun -u python -m src.model.train_disc "${ARGS[@]}"
 
 BEST="${RUNS_DIR}/${EXP_NAME}/weights/best.pt"

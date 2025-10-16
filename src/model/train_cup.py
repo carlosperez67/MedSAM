@@ -10,7 +10,7 @@ from typing import Optional
 import yaml
 from ultralytics import YOLO
 
-from src.utils import ensure_dir, need
+from src.utils import ensure_dir, need, expand
 
 
 # --- config ---

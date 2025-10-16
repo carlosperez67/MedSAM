@@ -14,7 +14,7 @@
 #SBATCH --mail-type=FAIL,END
 
 set -euo pipefail
-set -x  # echo commands so you can see exactly what gets passed
+# set -x  # echo commands so you can see exactly what gets passed
 
 SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
