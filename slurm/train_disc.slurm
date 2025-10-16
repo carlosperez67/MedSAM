@@ -106,6 +106,7 @@ ARGS=(
 )
 
 # -------- Train --------
+cd /scratch/st-ipor-1/cperez/MedSAM
 srun -u python -m src.model.train_disc "${ARGS[@]}"
 
 BEST="${RUNS_DIR}/${EXP_NAME}/weights/best.pt"
