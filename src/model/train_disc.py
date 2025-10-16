@@ -3,35 +3,23 @@
 """
 OOP refactor: Train a disc-only detector from a 2-class YOLO dataset (0=disc, 1=cup).
 
-Features
+Additions
+---------
+- Modern model selection (YOLOv12/YOLOv11/YOLOv8):
+  * --weights /path/to/weights.pt  OR a hub tag like yolo12x.pt
+  * --family {auto,yolo12,yolo11,yolov8} with --size {n,s,m,l,x}
+- AMP and layer freezing:
+  * --amp true/false, --freeze N
+- Backward compatible with --model (mapped to --weights).
+
+Behavior
 --------
-- Precomputed disc-only support: if <data_root>/data.yaml exists, use it.
-- Otherwise, derive a disc-only dataset next to <data_root>: <data_root>_disc_only/
-  * Images symlinked (default) or copied
-  * Labels filtered to keep only class 0 (disc)
-  * Optionally drop images whose filtered label becomes empty
-  * Writes data.yaml with names: ["disc"]
-- Optional training-time resume:
-  * --resume auto         -> runs/<name>/weights/last.pt if present
-  * --resume /path/last.pt
-- Validates on 'test' if present, else 'val'.
-
-CLI examples
-------------
-# Basic
-python train_stageA_disc_only.py --project_dir /path/to/MedSAM
-
-# From existing disc-only root (already contains data.yaml)
-python train_stageA_disc_only.py --data_root /path/to/yolo_split_disc_only
-
-# With augmented train split for building
-python train_stageA_disc_only.py \
-  --project_dir /path/to/MedSAM \
-  --aug_root   /path/to/yolo_split_aug \
-  --train_splits train
-
-# Resume training from last.pt (auto)
-python train_stageA_disc_only.py --resume auto
+- If <data_root>/data.yaml exists, use it as a precomputed disc-only dataset.
+- Otherwise derive <data_root>_disc_only/ by filtering labels to class 0 (disc).
+- Optional resume:
+  * --resume auto         -> runs/<name>/weights/last.pt
+  * --resume /abs/path/last.pt
+- Validate on 'test' if present, else 'val'.
 """
 
 from __future__ import annotations
@@ -48,6 +36,16 @@ from ultralytics import YOLO
 
 from src.model.utils import ultralytics_device_arg, place, split_has_data, ensure_dir
 
+# ------------------------------
+# tiny local utils
+# ------------------------------
+def _expand(p: str | Path) -> Path:
+    return Path(os.path.expanduser(str(p))).resolve()
+
+def _looks_like_tag(s: str) -> bool:
+    # crude check for things like "yolo12x.pt", "yolo11l.pt", "yolov8s.pt"
+    s = s.lower()
+    return s.endswith(".pt") and ("yolo" in s)
 
 # ============================================================
 # Config & simple utilities
@@ -58,8 +56,14 @@ class DiscOnlyConfig:
     # core paths
     project_dir: Path
     data_root: Path                   # base YOLO root OR a precomputed disc-only root
-    model_path: Path
     runs_root: Path
+
+    # model selection
+    weights: Optional[str]            # explicit path or hub tag (yolo12x.pt)
+    family: str                       # auto|yolo12|yolo11|yolov8
+    size: str                         # n|s|m|l|x
+    amp: bool                         # AMP on/off
+    freeze: int                       # freeze first N layers (0 = none)
 
     # optional augmented source for train split(s)
     aug_root: Optional[Path]
@@ -78,6 +82,7 @@ class DiscOnlyConfig:
 
     # resume
     resume: Optional[str]             # "", "auto", or path to last.pt
+
 
 class DiscOnlyDatasetBuilder:
     """Builds (or reuses) a disc-only YOLO dataset and returns (root, data_yaml_path)."""
@@ -181,7 +186,7 @@ class YoloTrainer:
 
     def __init__(self, cfg: DiscOnlyConfig) -> None:
         self.cfg = cfg
-        self.device = ultralytics_device_arg()
+        self.device = ultralytics_device_arg()  # "0" or "cpu" (DDP via env if multi-GPU)
         self.model: YOLO | None = None
         self.resuming: bool = False
 
@@ -189,19 +194,38 @@ class YoloTrainer:
         p = self.cfg.runs_root / self.cfg.exp_name / "weights" / "last.pt"
         return p if p.exists() else None
 
-    def _build_from_weights(self, weights: Path) -> YOLO:
-        if not weights.exists():
-            raise SystemExit(f"[ERR] Model weights not found at: {weights}")
-        return YOLO(str(weights))
+    def _resolve_weights_tag(self) -> str:
+        """Pick hub tag based on family/size (largest by default)."""
+        fam = (self.cfg.family or "auto").lower()
+        size = (self.cfg.size or "x").lower()
+        if fam in ("auto", "yolo12"):
+            return f"yolo12{size}.pt"
+        if fam == "yolo11":
+            return f"yolo11{size}.pt"
+        return f"yolov8{size}.pt"
+
+    def _build_from_weights(self, weights_spec: str) -> YOLO:
+        """Accepts either a local path or a hub tag."""
+        p = Path(weights_spec)
+        if p.exists():
+            return YOLO(str(p))
+        # If it's not a local file, treat as tag (requires internet unless you’ve pre-downloaded to CWD)
+        try:
+            return YOLO(weights_spec)
+        except Exception as e:
+            raise SystemExit(
+                f"[ERR] Could not load weights '{weights_spec}'. "
+                f"If you are offline, pass a LOCAL .pt path. Underlying error: {e}"
+            )
 
     def prepare_model(self) -> None:
-        """Apply resume policy or start from provided weights."""
+        """Apply resume policy or start from provided/selected weights."""
         last_ckpt: Optional[Path] = None
         if self.cfg.resume:
             if str(self.cfg.resume).lower() == "auto":
                 last_ckpt = self._find_last_ckpt()
             else:
-                last_ckpt = expand(self.cfg.resume)
+                last_ckpt = _expand(self.cfg.resume)
 
         if last_ckpt and last_ckpt.exists():
             print(f"[INFO] Resuming from: {last_ckpt}")
@@ -211,7 +235,12 @@ class YoloTrainer:
             if self.cfg.resume:
                 print(f"[WARN] --resume requested but checkpoint not found. "
                       f"Starting fresh. (Searched: {last_ckpt})")
-            self.model = self._build_from_weights(self.cfg.model_path)
+            weights_spec = (
+                self.cfg.weights if self.cfg.weights
+                else self._resolve_weights_tag()
+            )
+            print(f"[INFO] Starting from weights: {weights_spec}")
+            self.model = self._build_from_weights(weights_spec)
             self.resuming = False
 
     def train(self, data_yaml: Path) -> None:
@@ -219,7 +248,7 @@ class YoloTrainer:
             return
         assert self.model is not None
         print(f"[INFO] Training… (epochs={self.cfg.epochs}, imgsz={self.cfg.imgsz}, "
-              f"batch={self.cfg.batch}, resume={self.resuming})")
+              f"batch={self.cfg.batch}, resume={self.resuming}, amp={self.cfg.amp}, freeze={self.cfg.freeze})")
         self.model.train(
             data=str(data_yaml),
             epochs=self.cfg.epochs,
@@ -232,8 +261,10 @@ class YoloTrainer:
             optimizer="AdamW",
             pretrained=not self.resuming,   # avoid re-init when resuming
             patience=50,
-            single_cls=True,
+            single_cls=True,                # disc-only
             resume=self.resuming,
+            amp=self.cfg.amp,
+            freeze=self.cfg.freeze,
         )
 
     def validate(self, data_yaml: Path) -> None:
@@ -315,7 +346,6 @@ def _parse_train_splits(val: str | List[str]) -> List[str]:
         return [str(s).strip() for s in val if str(s).strip()]
     return [s.strip() for s in str(val).split(",") if s.strip()]
 
-
 def build_config_from_cli() -> DiscOnlyConfig:
     ap = argparse.ArgumentParser(
         description="Train a disc-only detector from a 2-class YOLO dataset (0=disc,1=cup)."
@@ -329,10 +359,18 @@ def build_config_from_cli() -> DiscOnlyConfig:
                     help="Augmented YOLO dataset root (used ONLY for the splits listed in --train_splits).")
     ap.add_argument("--train_splits", default="train",
                     help="Comma list or YAML-style list of splits to pull from aug_root (default: 'train').")
+
+    # Model selection (NEW)
+    ap.add_argument("--weights", default=None,
+                    help="Explicit weights path or hub tag (e.g., yolo12x.pt). If omitted, selects by --family/--size.")
+    ap.add_argument("--family", default="auto", choices=["auto","yolo12","yolo11","yolov8"],
+                    help="Model family to auto-select from when --weights is not given.")
+    ap.add_argument("--size", default="x", choices=["n","s","m","l","x"],
+                    help="Model size to auto-select (default: x, largest).")
+
+    # Back-compat alias
     ap.add_argument("--model", default=None,
-                    help="Weights path (defaults to PROJECT_DIR/weights/yolov8n.pt).")
-    ap.add_argument("--project", default=None,
-                    help="Ultralytics runs root (defaults to PROJECT_DIR/bounding_box/runs/detect).")
+                    help="[Deprecated] Same as --weights. Kept for backward compatibility.")
 
     # Training
     ap.add_argument("--epochs", type=int, default=100)
@@ -340,6 +378,9 @@ def build_config_from_cli() -> DiscOnlyConfig:
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--name", default="stageA_disc_only", help="Ultralytics experiment name.")
     ap.add_argument("--train", type=int, default=1, help="1=train+val, 0=val-only.")
+    ap.add_argument("--freeze", type=int, default=0, help="Freeze first N layers (0 = none).")
+    ap.add_argument("--amp", type=lambda v: str(v).lower() not in {"0","false","no"}, default=True,
+                    help="Enable/disable AMP (default: True).")
 
     # Resume
     ap.add_argument("--resume", default="", help="Path to last.pt OR 'auto' to use runs/<name>/weights/last.pt")
@@ -350,21 +391,28 @@ def build_config_from_cli() -> DiscOnlyConfig:
 
     args = ap.parse_args()
 
-    project_dir = expand(args.project_dir)
-    data_root = expand(args.data_root) if args.data_root else (project_dir / "data" / "yolo_split")
-    aug_root = expand(args.aug_root) if args.aug_root else None
+    # Resolve roots
+    project_dir = _expand(args.project_dir)
+    data_root = _expand(args.data_root) if args.data_root else (project_dir / "data" / "yolo_split")
+    aug_root = _expand(args.aug_root) if args.aug_root else None
     train_splits = _parse_train_splits(args.train_splits)
 
-    # defaults
-    model_path = expand(args.model) if args.model else (project_dir / "weights" / "yolov8n.pt")
-    runs_root = expand(args.project) if args.project else (project_dir / "bounding_box" / "runs" / "detect")
+    # Runs root
+    runs_root = project_dir / "bounding_box" / "runs" / "detect"
     ensure_dir(runs_root)
+
+    # Choose weights: prefer --weights; else --model (deprecated); else family/size auto-select
+    weights = args.weights or args.model
 
     return DiscOnlyConfig(
         project_dir=project_dir,
         data_root=data_root,
-        model_path=model_path,
         runs_root=runs_root,
+        weights=(str(weights) if weights else None),
+        family=str(args.family),
+        size=str(args.size),
+        amp=bool(args.amp),
+        freeze=int(args.freeze),
         aug_root=aug_root,
         train_splits=train_splits,
         copy_images=bool(args.copy_images),
