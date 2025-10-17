@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
 #SBATCH --mem=128G
-#SBATCH --time=4:00:00
+#SBATCH --time=8:00:00
 #SBATCH --gpus=4
 #SBATCH --output=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.out
 #SBATCH --error=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.err
@@ -90,12 +90,12 @@ ARGS=(
   --weights   "${WEIGHTS_LOCAL}"
   --family    auto
   --size      x
-  --epochs    100
+  --epochs    200
   --imgsz     512
   --batch     16
 #  --optimizer SGD
   --mosaic    0.0
-  --freeze    0
+  --freeze    5
   --amp       true
   --name      "${EXP_NAME}"
   --workers   "${SLURM_CPUS_PER_TASK}"
