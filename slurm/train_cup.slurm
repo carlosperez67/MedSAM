@@ -94,7 +94,7 @@ ARGS=(
   --epochs    200
   --imgsz     512
   --batch     16
-  --optimizer AdamW
+  --optimizer SGD
   --mosaic    0.0
   --freeze    5
   --amp       true
