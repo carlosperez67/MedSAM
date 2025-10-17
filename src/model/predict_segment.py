@@ -19,7 +19,7 @@ from src.imgpipe.bounding_box import BoundingBox
 from src.imgpipe.collector import DatasetCollector, group_by_subject
 from src.utils import ensure_dir, stem_map_by_first_match
 from src.model.MedSAM_infer import (
-    MedSAMModel, medsam_infer, _embed_image_1024, load_medsam, _pick_device
+    MedSAMModel, medsam_infer, embed_image_1024, load_medsam, pick_device
 )
 
 # NOTE: adjust this import path if needed
@@ -232,7 +232,7 @@ def _process_one_image(
     # Image → embedding
     img_bgr = load_image_bgr(img.image_path)
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    emb, H, W, _ = _embed_image_1024(msam, img_rgb)
+    emb, H, W, _ = embed_image_1024(msam, img_rgb)
 
     # B) MedSAM disc → mask
     dxyxy = (int(round(disc_box.x1)), int(round(disc_box.y1)),
@@ -493,7 +493,7 @@ def main() -> None:
     lbl_writer = LabelWriter(args.out_labels, args.images_root, overwrite=args.overwrite)
 
     # MedSAM
-    dev = _pick_device(args.device)
+    dev = pick_device(args.device)
     msam = load_medsam(args.medsam_ckpt, dev, variant="vit_b")
 
     # Optional cup YOLO model (loaded once)

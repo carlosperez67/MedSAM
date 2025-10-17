@@ -16,7 +16,7 @@ class MedSAMModel:
     model: torch.nn.Module
     device: torch.device
 
-def _pick_device(device_arg: Optional[str]) -> torch.device:
+def pick_device(device_arg: Optional[str]) -> torch.device:
     if device_arg:
         if device_arg.lower() == "mps" and torch.backends.mps.is_available():
             return torch.device("mps")
@@ -36,7 +36,7 @@ def load_medsam(checkpoint: Path, device: torch.device, variant: str = "vit_b") 
     return MedSAMModel(model=model, device=device)
 
 @torch.no_grad()
-def _embed_image_1024(msam: MedSAMModel, img_3c: np.ndarray) -> Tuple[torch.Tensor, int, int, torch.Tensor]:
+def embed_image_1024(msam: MedSAMModel, img_3c: np.ndarray) -> Tuple[torch.Tensor, int, int, torch.Tensor]:
     H, W, _ = img_3c.shape
     img_1024 = sktf.resize(
         img_3c, (1024, 1024), order=3, preserve_range=True, anti_aliasing=True
