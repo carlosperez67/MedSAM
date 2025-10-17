@@ -95,7 +95,7 @@ ARGS=(
   --batch     16
 #  --optimizer SGD
   --mosaic    0.0
-  --freeze    5
+  --freeze    0
   --amp       true
   --name      "${EXP_NAME}"
   --workers   "${SLURM_CPUS_PER_TASK}"
