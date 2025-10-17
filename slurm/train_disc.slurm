@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
 #SBATCH --mem=128G
-#SBATCH --time=4:00:00
+#SBATCH --time=8:00:00
 #SBATCH --gpus=4
 #SBATCH --output=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.out
 #SBATCH --error=/scratch/st-ipor-1/cperez/MedSAM/logs/%x-%j.err
@@ -98,7 +98,7 @@ ARGS=(
   --weights     "${WEIGHTS_LOCAL}"   # local yolo12x.pt (offline)
   --family      auto
   --size        x
-  --epochs      100
+  --epochs      200
   --imgsz       640
   --batch       16                   # lower if OOM
   --name        "${EXP_NAME}"
