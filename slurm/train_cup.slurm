@@ -14,14 +14,17 @@
 #SBATCH --mail-type=FAIL,END
 
 set -euo pipefail
-# set -x  # echo commands so you can see exactly what gets passed
+# set -x  # uncomment to echo commands for debugging
 
+# -------- Paths --------
 SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
-# ensure the project root is on sys.path
+
+# Make project importable as `src.*`
 export PYTHONPATH="${SCRATCH_DIR}:${PYTHONPATH:-}"
+
 BB_DIR="${SCRATCH_DIR}/bounding_box"
-TRAIN_SCRIPT="${SCRATCH_DIR}/src/model/train_cup.py"
+TRAIN_MOD="src.model.train_cup"                       # run as a module to avoid import issues
 RUNS_DIR="${SCRATCH_DIR}/runs/detect"
 ROI_ROOT="${BB_DIR}/data/yolo_split_cupROI"
 WEIGHTS_LOCAL="${BB_DIR}/weights/yolo12x.pt"
@@ -29,17 +32,18 @@ EXP_NAME="stageB_cup_roi_y12x"
 
 mkdir -p "${SCRATCH_DIR}/logs" "${RUNS_DIR}"
 
+# -------- Conda --------
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate "$ENV_PREFIX"
 
-# Offline & quiet
+# -------- Offline / Quiet --------
 export WANDB_DISABLED=true
 export HF_HUB_OFFLINE=1
 export HF_HUB_DISABLE_TELEMETRY=1
 export ULTRALYTICS_HUB=False
 export ULTRALYTICS_ANALYTICS=False
 
-# Caches / temp
+# -------- Caches / Temp --------
 export XDG_CACHE_HOME="${SCRATCH_DIR}/.cache"
 export XDG_CONFIG_HOME="${SCRATCH_DIR}/.config"
 export ULTRALYTICS_CONFIG_DIR="${XDG_CONFIG_HOME}/Ultralytics"
@@ -47,7 +51,7 @@ export MPLCONFIGDIR="${XDG_CACHE_HOME}/matplotlib"
 export TMPDIR="${SCRATCH_DIR}/tmp"
 mkdir -p "$XDG_CACHE_HOME" "$ULTRALYTICS_CONFIG_DIR/DDP" "$MPLCONFIGDIR" "$TMPDIR"
 
-# Threading + allocator
+# -------- Threads & Allocator --------
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
@@ -55,13 +59,14 @@ export NUMEXPR_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export PYTHONUNBUFFERED=1
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:64"
 
-# NCCL (single node)
+# -------- NCCL (single node) --------
 export NCCL_IB_DISABLE=1
 export NCCL_P2P_DISABLE=0
 export NCCL_DEBUG=warn
+export MASTER_PORT=$(( 10000 + (RANDOM % 50000) ))  # avoid port collisions on shared nodes
 
-# Choose devices by visibility rather than --device arg to avoid quoting issues
-# This makes all GPUs visible; Ultralytics will DDP across them automatically.
+# -------- GPU visibility & Ultralytics multi-GPU hint --------
+# Map requested GPUs to local ordinals 0..N-1 and expose to PyTorch
 CUDA_LIST=$(python - <<'PY'
 import os
 n = int(os.environ.get("SLURM_GPUS", "1"))
@@ -69,22 +74,28 @@ print(",".join(str(i) for i in range(n)))
 PY
 )
 export CUDA_VISIBLE_DEVICES="${CUDA_LIST}"
+# Let your ultralytics_device_arg() pick these up for DDP ("0,1,2,3", etc.)
+export YOLO_DEVICES="${CUDA_LIST}"
 
+echo "GPUs requested: ${SLURM_GPUS:-unknown}"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+echo "YOLO_DEVICES=${YOLO_DEVICES}"
 nvidia-smi -L || true
 
-# Sanity
-[[ -f "${TRAIN_SCRIPT}" ]] || { echo "[ERR] Trainer not found: ${TRAIN_SCRIPT}" >&2; exit 2; }
+# -------- Sanity checks --------
 [[ -d "${ROI_ROOT}"     ]] || { echo "[ERR] ROI root not found: ${ROI_ROOT}" >&2; exit 2; }
 [[ -f "${WEIGHTS_LOCAL}" ]]|| { echo "[ERR] Local weights not found: ${WEIGHTS_LOCAL}" >&2; exit 2; }
+
+# data.yaml convenience symlink if needed
 if [[ -f "${ROI_ROOT}/cup_roi.yaml" && ! -f "${ROI_ROOT}/data.yaml" ]]; then
   ln -sf "${ROI_ROOT}/cup_roi.yaml" "${ROI_ROOT}/data.yaml"
 fi
-[[ -f "${ROI_ROOT}/data.yaml" ]] || { echo "[ERR] Missing data.yaml" >&2; exit 2; }
+[[ -f "${ROI_ROOT}/data.yaml" ]] || { echo "[ERR] Missing data.yaml at ${ROI_ROOT}/data.yaml" >&2; exit 2; }
 
-# SHOW the parser we expect (catches mismatched script versions)
-python "${TRAIN_SCRIPT}" --help | sed -n '1,40p'
+# -------- Show CLI help (first lines) --------
+python -m "${TRAIN_MOD}" --help | sed -n '1,40p'
 
-# Build args as an array (no line-continuation gotchas)
+# -------- Build args safely --------
 ARGS=(
   --data-root "${ROI_ROOT}"
   --runs-root "${RUNS_DIR}"
@@ -102,13 +113,11 @@ ARGS=(
   --workers   "${SLURM_CPUS_PER_TASK}"
 )
 
-# Optional: ensure Unix line endings to avoid hidden \r
-# dos2unix "${TRAIN_SCRIPT}" 2>/dev/null || true
+# -------- Train --------
+cd "${SCRATCH_DIR}"
+srun -u python -m "${TRAIN_MOD}" "${ARGS[@]}"
 
-# Train
-cd /scratch/st-ipor-1/cperez/MedSAM
-srun -u python -m src.model.train_cup "${ARGS[@]}"
-
+# -------- Post-run check --------
 BEST="${RUNS_DIR}/${EXP_NAME}/weights/best.pt"
 [[ -f "${BEST}" ]] || { echo "[ERR] best.pt not found at ${BEST}" >&2; exit 3; }
 

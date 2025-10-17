@@ -14,7 +14,7 @@
 #SBATCH --mail-type=FAIL,END
 
 set -euo pipefail
-set -x
+#s  et -x
 
 # -------- Paths --------
 SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"      # project root (contains src/)

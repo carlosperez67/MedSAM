@@ -22,19 +22,44 @@ def need(p: Path, what: str) -> None:
     if not p.exists():
         raise SystemExit(f"[ERR] {what} not found: {p}")
 
+# src/device_utils.py
+
+import os
+import torch
+
 def ultralytics_device_arg() -> str:
     """
-    Returns a device argument for Ultralytics .train():
-      - If YOLO_DEVICES is set (e.g. "0,1" or "0,1,2,3"), return it (enables DDP).
-      - Else if CUDA is visible, return "0".
-      - Else return "cpu".
+    Decide the `device` argument for Ultralytics:
+      - If YOLO_DEVICES is set (e.g., "0,1,2,3"), return it (DDP).
+      - Else if CUDA_VISIBLE_DEVICES is set, use all *visible* GPUs ("0,1,...").
+      - Else if CUDA is available, use "0".
+      - Else if Apple MPS is available, use "mps".
+      - Else "cpu".
     """
+    # 1) Respect explicit multi-GPU setting
     env = os.getenv("YOLO_DEVICES")
     if env:
-        return env  # Ultralytics treats "0,1" as multi-GPU (DDP)
-    # simple fallback
-    if is_available() and device_count() > 0:
-        return "mps"
+        return env
+
+    # 2) Use all visible GPUs if CUDA_VISIBLE_DEVICES is set
+    cvd = os.getenv("CUDA_VISIBLE_DEVICES", "").strip()
+    if cvd not in ("", "-1"):
+        # Map to local ordinals 0..N-1
+        n = len([x for x in cvd.split(",") if x.strip() != ""])
+        return ",".join(str(i) for i in range(n)) if n > 1 else "0"
+
+    # 3) Native CUDA check
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        return "0"
+
+    # 4) Apple GPU
+    try:
+        if torch.backends.mps.is_available():  # type: ignore[attr-defined]
+            return "mps"
+    except Exception:
+        pass
+
+    # 5) CPU fallback
     return "cpu"
 
 # ======================================================================
