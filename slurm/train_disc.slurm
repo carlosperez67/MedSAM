@@ -19,6 +19,7 @@ set -x
 # -------- Paths --------
 SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"      # project root (contains src/)
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
+export PYTHONPATH="${SCRATCH_DIR}:${PYTHONPATH:-}"
 
 DATA_ROOT="${SCRATCH_DIR}/bounding_box/data/yolo_split"   # 2-class dataset root
 WEIGHTS_LOCAL="${SCRATCH_DIR}/bounding_box/weights/yolo12x.pt"

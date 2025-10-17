@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import ultralytics
 import yaml
 from ultralytics import YOLO
 
-from src.utils import ensure_dir, need, expand
+from src.utils import ensure_dir, need, expand, ultralytics_device_arg
 
 
 # --- config ---
@@ -64,7 +65,7 @@ class CupROITrainer:
         need(cfg.data_root, "ROI dataset root")
         need(self.yaml_path, "data.yaml")
         ensure_dir(cfg.runs_root)
-        self.device = cfg.device or _auto_device()
+        self.device = cfg.device or ultralytics_device_arg()
         self.model = YOLO(self._resolve_weights())
 
     # prefer newest, biggest model by name
