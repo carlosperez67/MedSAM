@@ -18,7 +18,8 @@ set -euo pipefail
 
 SCRATCH_DIR="/scratch/st-ipor-1/cperez/MedSAM"
 ENV_PREFIX="/arc/project/st-ipor-1/carlosp/envs/medsam"
-
+# ensure the project root is on sys.path
+export PYTHONPATH="${SCRATCH_DIR}:${PYTHONPATH:-}"
 BB_DIR="${SCRATCH_DIR}/bounding_box"
 TRAIN_SCRIPT="${SCRATCH_DIR}/src/model/train_cup.py"
 RUNS_DIR="${SCRATCH_DIR}/runs/detect"
